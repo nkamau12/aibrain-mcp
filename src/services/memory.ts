@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getTable, rebuildFtsIndex, isFtsIndexed } from '../db/init.js';
-import { generateEmbedding, checkOllamaHealth } from './embedding.js';
+import { generateEmbedding, isEmbeddingAvailable } from './embedding.js';
 import type {
   MemoryDocument,
   MemorySearchResult,
@@ -10,24 +10,35 @@ import type {
   TagCount,
 } from '../types.js';
 
+const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
+
+function escapeStr(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function safeDate(value: string): string {
+  if (!ISO8601_RE.test(value)) throw new Error(`Invalid date filter value: ${value}`);
+  return value;
+}
+
 function buildWhereClause(filters: MemoryFilters | undefined): string {
   if (!filters) return '';
   const clauses: string[] = [];
 
   if (filters.agentName) {
-    clauses.push(`\`agentName\` = '${filters.agentName.replace(/'/g, "''")}'`);
+    clauses.push(`\`agentName\` = '${escapeStr(filters.agentName)}'`);
   }
   if (filters.sessionId) {
-    clauses.push(`\`sessionId\` = '${filters.sessionId.replace(/'/g, "''")}'`);
+    clauses.push(`\`sessionId\` = '${escapeStr(filters.sessionId)}'`);
   }
   if (filters.projectPath !== undefined) {
-    clauses.push(`\`projectPath\` = '${filters.projectPath.replace(/'/g, "''")}'`);
+    clauses.push(`\`projectPath\` = '${escapeStr(filters.projectPath)}'`);
   }
   if (filters.since) {
-    clauses.push(`\`createdAt\` >= '${filters.since}'`);
+    clauses.push(`\`createdAt\` >= '${safeDate(filters.since)}'`);
   }
   if (filters.until) {
-    clauses.push(`\`createdAt\` <= '${filters.until}'`);
+    clauses.push(`\`createdAt\` <= '${safeDate(filters.until)}'`);
   }
 
   return clauses.join(' AND ');
@@ -82,7 +93,8 @@ export async function saveMemory(
     id,
     content: input.content,
     summary: input.summary,
-    embedding: embedding.length > 0 ? embedding : null,
+    // LanceDB rejects null for FixedSizeList columns; use zero vector when embedding unavailable
+    embedding: embedding.length > 0 ? embedding : new Array(768).fill(0),
     tags: input.tags ?? [],
     agentName: input.agentName,
     sessionId: input.sessionId,
@@ -94,8 +106,8 @@ export async function saveMemory(
 
   await table.add([row]);
 
-  // Rebuild FTS index so new row is searchable (non-blocking, fire-and-forget)
-  rebuildFtsIndex().catch((e) => console.error('[aibrain] FTS rebuild failed:', e.message));
+  // Schedule a debounced FTS index rebuild so the new row becomes searchable
+  rebuildFtsIndex();
 
   return id;
 }
@@ -110,9 +122,9 @@ export async function searchMemories(options: SearchOptions): Promise<{
   let mode = options.searchMode ?? 'hybrid';
 
   if (mode === 'hybrid' || mode === 'vector') {
-    const ollamaUp = await checkOllamaHealth();
-    if (!ollamaUp) {
-      console.error('[aibrain] Ollama unavailable, falling back to fulltext search');
+    const embeddingUp = await isEmbeddingAvailable();
+    if (!embeddingUp) {
+      console.error('[aibrain] Embedding unavailable, falling back to fulltext search');
       mode = 'fulltext';
     }
   }
@@ -184,15 +196,20 @@ async function fulltextSearch(
   // Use FTS index if available
   if (isFtsIndexed()) {
     try {
-      let q = table.search(query, 'fts', 'contentAndSummary').limit(limit);
-      if (where) q = q.where(where);
-      const rows = await q.toArray();
-      const filtered = applyTagFilter(rows, filters?.tags);
-      return {
-        results: filtered.map((r: any) => rowToResult(r, opts)),
-        totalFound: filtered.length,
-        searchMode: 'fulltext',
-      };
+      // Fetch more than needed; apply WHERE/tag filters in JS since LanceDB FTS
+      // does not reliably honour .where() on indexed columns in all versions.
+      const q = table.search(query, 'fts', 'contentAndSummary').limit(limit * 5);
+      let rows = await q.toArray();
+      if (where) rows = rows.filter((r: any) => matchesWhere(r, filters));
+      rows = applyTagFilter(rows, filters?.tags);
+      if (rows.length > 0) {
+        return {
+          results: rows.slice(0, limit).map((r: any) => rowToResult(r, opts)),
+          totalFound: rows.length,
+          searchMode: 'fulltext',
+        };
+      }
+      // FTS returned 0 results after filtering — fall through to manual scan
     } catch (err: any) {
       console.error('[aibrain] FTS index search failed, falling back to scan:', err.message);
     }
@@ -271,6 +288,16 @@ async function vectorSearch(
   }
 }
 
+function matchesWhere(row: Record<string, any>, filters?: MemoryFilters): boolean {
+  if (!filters) return true;
+  if (filters.agentName && row.agentName !== filters.agentName) return false;
+  if (filters.sessionId && row.sessionId !== filters.sessionId) return false;
+  if (filters.projectPath !== undefined && row.projectPath !== filters.projectPath) return false;
+  if (filters.since && row.createdAt < filters.since) return false;
+  if (filters.until && row.createdAt > filters.until) return false;
+  return true;
+}
+
 function applyTagFilter(rows: any[], tags?: string[]): any[] {
   if (!tags || tags.length === 0) return rows;
   return rows.filter((row) => {
@@ -288,13 +315,14 @@ export async function getRecentMemories(
   const safeLimit = Math.min(limit, 100);
   const where = buildWhereClause(filters);
 
-  let q = table.query().limit(safeLimit);
+  // Fetch without limit first so where + tag filtering don't under-return
+  let q = table.query();
   if (where) q = q.where(where);
 
   const rows = await q.toArray();
   const filtered = applyTagFilter(rows, filters?.tags);
 
-  // Sort by createdAt descending
+  // Sort by createdAt descending then apply limit
   filtered.sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
 
   return {

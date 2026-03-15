@@ -7,6 +7,7 @@ dotenv.config();
 
 const configSchema = z.object({
   AIBRAIN_DATA_DIR: z.string().default(path.join(os.homedir(), '.aibrain', 'memories')),
+  EMBEDDING_PROVIDER: z.enum(['transformers', 'ollama']).default('transformers'),
   OLLAMA_URL: z.string().url().default('http://localhost:11434'),
   OLLAMA_MODEL: z.string().default('nomic-embed-text'),
   OLLAMA_TIMEOUT_MS: z.coerce.number().default(5000),

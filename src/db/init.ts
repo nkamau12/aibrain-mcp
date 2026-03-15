@@ -30,6 +30,7 @@ const SCHEMA = new arrow.Schema([
 
 let _table: lancedb.Table | null = null;
 let _ftsIndexed = false;
+let _ftsRebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
 export async function getTable(): Promise<lancedb.Table> {
   if (_table) return _table;
@@ -67,21 +68,25 @@ export async function getTable(): Promise<lancedb.Table> {
 }
 
 /**
- * (Re)build the FTS index. Called after writes so new rows are searchable.
- * Safe to call concurrently — subsequent calls are no-ops until the next write.
+ * Schedule an FTS index rebuild. Debounced so rapid successive writes
+ * (e.g. bulk saves) result in a single rebuild rather than concurrent ones.
  */
-export async function rebuildFtsIndex(): Promise<void> {
-  if (!_table) return;
-  try {
-    await _table.createIndex('contentAndSummary', {
-      config: lancedb.Index.fts(),
-      replace: true,
-    });
-    _ftsIndexed = true;
-  } catch (err: any) {
-    console.error('[aibrain] FTS index build error:', err.message);
-    _ftsIndexed = false;
-  }
+export function rebuildFtsIndex(): void {
+  if (_ftsRebuildTimer) clearTimeout(_ftsRebuildTimer);
+  _ftsRebuildTimer = setTimeout(async () => {
+    _ftsRebuildTimer = null;
+    if (!_table) return;
+    try {
+      await _table.createIndex('contentAndSummary', {
+        config: lancedb.Index.fts(),
+        replace: true,
+      });
+      _ftsIndexed = true;
+    } catch (err: any) {
+      console.error('[aibrain] FTS index build error:', err.message);
+      _ftsIndexed = false;
+    }
+  }, 500);
 }
 
 export function isFtsIndexed(): boolean {

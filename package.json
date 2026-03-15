@@ -24,6 +24,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
     "@lancedb/lancedb": "^0.17.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "apache-arrow": "^18.0.0",
