@@ -1,0 +1,39 @@
+{
+  "name": "@aibrain/mcp",
+  "version": "0.1.0",
+  "description": "AI agent memory MCP server with hybrid BM25 + vector search — no Docker required",
+  "keywords": ["mcp", "memory", "ai", "agent", "vector-search", "lancedb"],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "aibrain-mcp": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist/",
+    "README.md",
+    "smithery.yaml"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.17.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "apache-arrow": "^18.0.0",
+    "dotenv": "^16.0.0",
+    "uuid": "^11.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.6.0"
+  }
+}

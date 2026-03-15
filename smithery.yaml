@@ -1,0 +1,19 @@
+startCommand:
+  type: stdio
+  configSchema:
+    properties:
+      dataDir:
+        type: string
+        description: "Path to store memories (default: ~/.aibrain/memories)"
+      ollamaUrl:
+        type: string
+        description: "Ollama base URL for embeddings (optional, enables semantic search)"
+  commandFunction: |
+    (config) => ({
+      command: "npx",
+      args: ["-y", "@aibrain/mcp"],
+      env: {
+        AIBRAIN_DATA_DIR: config.dataDir ?? "",
+        OLLAMA_URL: config.ollamaUrl ?? "",
+      }
+    })
