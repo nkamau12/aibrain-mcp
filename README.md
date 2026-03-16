@@ -29,7 +29,7 @@ npx -y @aibrain/mcp --setup
 Clone and build the repo, then point your MCP client at the local binary.
 
 ```bash
-git clone https://github.com/your-org/aibrain-mcp.git
+git clone https://github.com/nkamau12/aibrain-mcp.git
 cd aibrain-mcp
 npm install
 npm run build
@@ -316,6 +316,35 @@ If you want lighter-touch behaviour, this shorter version works well:
 - At session end: save a summary of what was done and what's left
 - Always set `projectPath` to the current working directory when saving
 ````
+
+---
+
+## Web Dashboard (aibrain-ui)
+
+Browse, search, and manage your memories visually with **[aibrain-ui](https://github.com/nkamau12/aibrain-ui)** — a dark-themed web dashboard built on top of aibrain-mcp.
+
+### Automatic setup
+
+```bash
+# From within the aibrain-mcp directory:
+node dist/cli.js --setup-ui
+
+# Or via npx (once published):
+npx -y @aibrain/mcp --setup-ui
+```
+
+This clones aibrain-ui as a sibling directory, installs dependencies, and creates the `.env` file. Then just:
+
+```bash
+cd ../aibrain-ui
+npm run dev
+```
+
+Dashboard opens at [http://localhost:5173](http://localhost:5173).
+
+### Manual setup
+
+See the [aibrain-ui README](https://github.com/nkamau12/aibrain-ui#readme) for manual installation instructions.
 
 ---
 

@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 import { config } from './config.js';
 import { setupOllama } from './setup/ollama.js';
+import { setupUI } from './setup/ui.js';
 
 const args = process.argv.slice(2);
+
+if (args.includes('--setup-ui')) {
+  await setupUI();
+  process.exit(0);
+}
 
 if (args.includes('--setup')) {
   if (config.EMBEDDING_PROVIDER === 'ollama') {
