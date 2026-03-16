@@ -10,6 +10,10 @@ import type {
   TagCount,
 } from '../types.js';
 
+// LanceDB applies a default limit of 10 to query().toArray() if no limit is set.
+// Use this constant to fetch all rows when we need the full dataset.
+const QUERY_ALL_LIMIT = 1_000_000;
+
 const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
 
 function escapeStr(value: string): string {
@@ -228,7 +232,7 @@ async function manualTextSearch(
   opts?: ResultOptions
 ): Promise<{ results: MemorySearchResult[]; totalFound: number; searchMode: string }> {
   try {
-    let q = table.query();
+    let q = table.query().limit(QUERY_ALL_LIMIT);
     if (where) q = q.where(where);
     const rows = await q.toArray();
 
@@ -315,8 +319,9 @@ export async function getRecentMemories(
   const safeLimit = Math.min(limit, 100);
   const where = buildWhereClause(filters);
 
-  // Fetch without limit first so where + tag filtering don't under-return
-  let q = table.query();
+  // Fetch all matching rows so where + tag filtering don't under-return.
+  // LanceDB defaults to limit=10 without an explicit .limit() call.
+  let q = table.query().limit(QUERY_ALL_LIMIT);
   if (where) q = q.where(where);
 
   const rows = await q.toArray();
@@ -374,7 +379,7 @@ export async function listTags(
     clauses.push(`\`projectPath\` = '${projectPath.replace(/'/g, "''")}'`);
 
   const where = clauses.join(' AND ');
-  let q = table.query();
+  let q = table.query().limit(QUERY_ALL_LIMIT);
   if (where) q = q.where(where);
 
   const rows = await q.toArray();
