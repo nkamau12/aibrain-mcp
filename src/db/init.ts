@@ -32,6 +32,15 @@ let _table: lancedb.Table | null = null;
 let _ftsIndexed = false;
 let _ftsRebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Reset the cached table handle so the next getTable() call re-opens it.
+ * Use this when serving requests in a separate process (e.g. the aibrain-ui
+ * Express server) to pick up rows written by another process (the MCP server).
+ */
+export function resetTableCache(): void {
+  _table = null;
+}
+
 export async function getTable(): Promise<lancedb.Table> {
   if (_table) return _table;
 
