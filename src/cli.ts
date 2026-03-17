@@ -6,7 +6,9 @@ import { setupUI } from './setup/ui.js';
 const args = process.argv.slice(2);
 
 if (args.includes('--setup-ui')) {
-  await setupUI();
+  const dirIdx = args.indexOf('--setup-ui') + 1;
+  const targetDir = dirIdx < args.length && !args[dirIdx].startsWith('--') ? args[dirIdx] : undefined;
+  await setupUI(targetDir);
   process.exit(0);
 }
 

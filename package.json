@@ -1,8 +1,15 @@
 {
   "name": "@aibrain/mcp",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "AI agent memory MCP server with hybrid BM25 + vector search — no Docker required",
-  "keywords": ["mcp", "memory", "ai", "agent", "vector-search", "lancedb"],
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "agent",
+    "vector-search",
+    "lancedb"
+  ],
   "license": "MIT",
   "type": "module",
   "engines": {

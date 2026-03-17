@@ -10,9 +10,11 @@ npx -y @aibrain/mcp
 
 # Optional: install Ollama for semantic search
 npx -y @aibrain/mcp --setup
-```
 
-> **Note:** Until `@aibrain/mcp` is published to npm, use the [local install instructions](#local-install-before-npm-publish) below.
+# Optional: set up the web dashboard
+npx -y @aibrain/mcp --setup-ui
+npx -y @aibrain/mcp --setup-ui ~/projects   # custom location
+```
 
 ## Features
 
@@ -24,46 +26,18 @@ npx -y @aibrain/mcp --setup
 
 ---
 
-## Local Install (Before npm Publish)
-
-Clone and build the repo, then point your MCP client at the local binary.
-
-```bash
-git clone https://github.com/nkamau12/aibrain-mcp.git
-cd aibrain-mcp
-npm install
-npm run build
-```
-
-Then use `node /path/to/aibrain-mcp/dist/cli.js` as the command in your MCP client config, replacing `/path/to/aibrain-mcp` with the directory you cloned into.
-
----
-
 ## Client Integration
 
 ### Claude Code
 
 Add to `~/.claude/settings.json`:
 
-**npm (once published):**
 ```json
 {
   "mcpServers": {
     "aibrain": {
       "command": "npx",
       "args": ["-y", "@aibrain/mcp"]
-    }
-  }
-}
-```
-
-**Local install:**
-```json
-{
-  "mcpServers": {
-    "aibrain": {
-      "command": "node",
-      "args": ["/path/to/aibrain-mcp/dist/cli.js"]
     }
   }
 }
@@ -73,25 +47,12 @@ Add to `~/.claude/settings.json`:
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
-**npm (once published):**
 ```json
 {
   "mcpServers": {
     "aibrain": {
       "command": "npx",
       "args": ["-y", "@aibrain/mcp"]
-    }
-  }
-}
-```
-
-**Local install:**
-```json
-{
-  "mcpServers": {
-    "aibrain": {
-      "command": "node",
-      "args": ["/path/to/aibrain-mcp/dist/cli.js"]
     }
   }
 }
@@ -101,25 +62,12 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 Add to `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json` globally:
 
-**npm (once published):**
 ```json
 {
   "mcpServers": {
     "aibrain": {
       "command": "npx",
       "args": ["-y", "@aibrain/mcp"]
-    }
-  }
-}
-```
-
-**Local install:**
-```json
-{
-  "mcpServers": {
-    "aibrain": {
-      "command": "node",
-      "args": ["/path/to/aibrain-mcp/dist/cli.js"]
     }
   }
 }
@@ -129,25 +77,12 @@ Add to `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json` globally:
 
 Add to `~/.config/amp/settings.json` (global) or `.amp/settings.json` in your project root:
 
-**npm (once published):**
 ```json
 {
   "mcpServers": {
     "aibrain": {
       "command": "npx",
       "args": ["-y", "@aibrain/mcp"]
-    }
-  }
-}
-```
-
-**Local install:**
-```json
-{
-  "mcpServers": {
-    "aibrain": {
-      "command": "node",
-      "args": ["/path/to/aibrain-mcp/dist/cli.js"]
     }
   }
 }
@@ -181,6 +116,16 @@ Set these in your shell profile or pass them via `env` in your MCP client config
   }
 }
 ```
+
+---
+
+## CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--setup` | Install Ollama and pull the embedding model (only needed for `EMBEDDING_PROVIDER=ollama`) |
+| `--setup-ui` | Clone and set up the [aibrain-ui](https://github.com/nkamau12/aibrain-ui) web dashboard |
+| `--setup-ui <path>` | Clone aibrain-ui into a custom directory (defaults to current directory) |
 
 ---
 
@@ -326,17 +271,17 @@ Browse, search, and manage your memories visually with **[aibrain-ui](https://gi
 ### Automatic setup
 
 ```bash
-# From within the aibrain-mcp directory:
-node dist/cli.js --setup-ui
-
-# Or via npx (once published):
+# Clones aibrain-ui into current directory
 npx -y @aibrain/mcp --setup-ui
+
+# Or specify a custom location
+npx -y @aibrain/mcp --setup-ui ~/projects
 ```
 
-This clones aibrain-ui as a sibling directory, installs dependencies, and creates the `.env` file. Then just:
+This clones aibrain-ui, installs dependencies, and creates the `.env` file. Then:
 
 ```bash
-cd ../aibrain-ui
+cd aibrain-ui
 npm run dev
 ```
 
@@ -352,7 +297,6 @@ See the [aibrain-ui README](https://github.com/nkamau12/aibrain-ui#readme) for m
 
 **Server doesn't start**
 - Ensure Node.js >= 20 is installed: `node --version`
-- For local installs, confirm the build succeeded: `ls dist/cli.js`
 
 **First run is slow / hangs**
 - The embedding model is downloading (~50MB). Wait for `[aibrain] Embedding model ready` to appear. This only happens once.

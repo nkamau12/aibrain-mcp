@@ -1,14 +1,12 @@
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { resolve } from 'path';
 const REPO_URL = 'https://github.com/nkamau12/aibrain-ui.git';
 
 function getParentDir(): string {
-  // Go up from src/setup/ → aibrain-mcp root → parent directory
-  return resolve(__dirname, '..', '..', '..');
+  // Use the user's current working directory so `npx @aibrain/mcp --setup-ui`
+  // clones aibrain-ui next to wherever the user runs the command.
+  return process.cwd();
 }
 
 function isGitInstalled(): boolean {
@@ -25,7 +23,7 @@ function isNodeVersionOk(): boolean {
   return major >= 18;
 }
 
-export async function setupUI(): Promise<void> {
+export async function setupUI(targetDir?: string): Promise<void> {
   console.error('\n[aibrain] === Web Dashboard Setup ===\n');
 
   if (!isGitInstalled()) {
@@ -38,7 +36,7 @@ export async function setupUI(): Promise<void> {
     return;
   }
 
-  const parentDir = getParentDir();
+  const parentDir = targetDir ? resolve(targetDir) : getParentDir();
   const uiDir = resolve(parentDir, 'aibrain-ui');
 
   if (existsSync(uiDir)) {
