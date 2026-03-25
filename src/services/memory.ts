@@ -128,7 +128,7 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
   }
 
   if (!filters.include_stale) {
-    clauses.push(`\`is_stale\` = false`);
+    clauses.push(`(\`is_stale\` = false OR \`is_stale\` IS NULL)`);
   }
 
   return clauses.join(' AND ');
