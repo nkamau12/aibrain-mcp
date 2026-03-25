@@ -381,7 +381,8 @@ export async function appendRelatedIdIfAbsent(
  * memory.
  *
  * When `includeStale` is false (the default), stale nodes are skipped during
- * traversal so stale memories never surface through the related-enrichment path.
+ * traversal — they are neither returned nor followed, pruning stale branches
+ * entirely.  When true, stale nodes are included and tagged with `is_stale: true`.
  */
 async function fetchRelatedBfs(
   seedIds: Set<string>,
@@ -415,9 +416,9 @@ async function fetchRelatedBfs(
     for (const item of fetched) {
       if (!item) continue;
       const { mem, entry } = item;
-
-      // Skip stale nodes unless the caller explicitly wants them.
-      if (!includeStale && mem.is_stale) continue;
+      // Skip stale nodes unless the caller explicitly wants them — don't add
+      // to results and don't follow their links so stale branches are pruned.
+      if (mem.is_stale && !includeStale) continue;
 
       const summary: RelatedMemorySummary = {
         id: mem.id,
@@ -800,6 +801,10 @@ export async function getRelatedMemories(
     const memory = await getMemoryById(id);
     if (!memory) continue;
     if (!includeStale && memory.is_stale) continue;
+
+    // Skip stale nodes unless the caller explicitly wants them — don't add
+    // to results and don't follow their links so stale branches are pruned.
+    if (memory.is_stale && !includeStale) continue;
 
     const node: (typeof nodes)[number] = {
       id: memory.id,

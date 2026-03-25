@@ -20,9 +20,12 @@ export const getRecentMemoriesSchema = z.object({
 
 export async function handleGetRecentMemories(args: unknown) {
   const input = getRecentMemoriesSchema.parse(args);
+  // Always pass a concrete filters object so buildWhereClause never receives
+  // undefined and skips the is_stale guard clause.
+  const filters = { include_stale: false, ...input.filters };
   const result = await getRecentMemories(
     input.limit,
-    input.filters,
+    filters,
     { includeContent: input.includeContent, contentMaxLength: input.contentMaxLength }
   );
   return {
