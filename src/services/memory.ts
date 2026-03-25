@@ -5,6 +5,8 @@ import { config } from '../config.js';
 import type {
   MemoryDocument,
   MemorySearchResult,
+  MemorySearchResultWithRelated,
+  RelatedMemorySummary,
   MemoryFilters,
   SearchOptions,
   ResultOptions,
@@ -285,8 +287,66 @@ export async function appendRelatedIdIfAbsent(
   });
 }
 
+/**
+ * BFS over related_ids links up to `maxDepth` hops, returning summary-only
+ * entries for each discovered neighbour.  IDs already in `seedIds` (the search
+ * result set itself) are excluded so we never return a result as its own related
+ * memory.
+ */
+async function fetchRelatedBfs(
+  seedIds: Set<string>,
+  rootRelatedIds: RelatedId[],
+  maxDepth: number
+): Promise<RelatedMemorySummary[]> {
+  const visited = new Set<string>(seedIds);
+  const summaries: RelatedMemorySummary[] = [];
+
+  // Queue entries: { id, relation_type from parent, depth }
+  type QueueEntry = { id: string; relation_type: RelatedId['relation_type']; depth: number };
+  let queue: QueueEntry[] = rootRelatedIds
+    .filter((r) => !visited.has(r.id))
+    .map((r) => ({ id: r.id, relation_type: r.relation_type, depth: 1 }));
+
+  while (queue.length > 0) {
+    // Process all nodes at the current frontier in parallel
+    const batch = queue;
+    queue = [];
+
+    const fetched = await Promise.all(
+      batch.map(async (entry) => {
+        if (visited.has(entry.id)) return null;
+        visited.add(entry.id);
+        const mem = await getMemoryById(entry.id);
+        return mem ? { mem, entry } : null;
+      })
+    );
+
+    for (const item of fetched) {
+      if (!item) continue;
+      const { mem, entry } = item;
+      summaries.push({
+        id: mem.id,
+        summary: mem.summary,
+        relation_type: entry.relation_type,
+        depth: entry.depth,
+      });
+
+      // Expand one more hop if depth budget allows
+      if (entry.depth < maxDepth && mem.related_ids) {
+        for (const next of mem.related_ids) {
+          if (!visited.has(next.id)) {
+            queue.push({ id: next.id, relation_type: next.relation_type, depth: entry.depth + 1 });
+          }
+        }
+      }
+    }
+  }
+
+  return summaries;
+}
+
 export async function searchMemories(options: SearchOptions): Promise<{
-  results: MemorySearchResult[];
+  results: MemorySearchResultWithRelated[];
   totalFound: number;
   searchMode: string;
 }> {
@@ -313,56 +373,74 @@ export async function searchMemories(options: SearchOptions): Promise<{
 
   const where = buildWhereClause(filters);
 
+  let response: { results: MemorySearchResult[]; totalFound: number; searchMode: string };
+
   if (mode === 'fulltext') {
-    return fulltextSearch(options.query, limit, where, filters, ro);
-  }
-
-  if (mode === 'vector') {
+    response = await fulltextSearch(options.query, limit, where, filters, ro);
+  } else if (mode === 'vector') {
     const embedding = await generateEmbedding(options.query);
-    if (embedding.length === 0) {
-      return fulltextSearch(options.query, limit, where, filters, ro);
-    }
-    return vectorSearch(embedding, limit, where, filters, ro);
+    response = embedding.length === 0
+      ? await fulltextSearch(options.query, limit, where, filters, ro)
+      : await vectorSearch(embedding, limit, where, filters, ro);
+  } else {
+    // Hybrid: run both, merge with RRF
+    const embedding = await generateEmbedding(options.query);
+
+    const [bm25Results, vectorResults] = await Promise.all([
+      fulltextSearch(options.query, limit * 3, where, filters, ro),
+      embedding.length > 0
+        ? vectorSearch(embedding, limit * 3, where, filters, ro)
+        : Promise.resolve({ results: [], totalFound: 0, searchMode: 'vector' }),
+    ]);
+
+    const scores = new Map<string, { score: number; doc: MemorySearchResult }>();
+
+    bm25Results.results.forEach((doc, rank) => {
+      const rrf = 1 / (rrfK + rank + 1);
+      const existing = scores.get(doc.id);
+      if (existing) {
+        existing.score += rrf;
+      } else {
+        scores.set(doc.id, { score: rrf, doc });
+      }
+    });
+
+    vectorResults.results.forEach((doc, rank) => {
+      const rrf = 1 / (rrfK + rank + 1);
+      const existing = scores.get(doc.id);
+      if (existing) {
+        existing.score += rrf;
+      } else {
+        scores.set(doc.id, { score: rrf, doc });
+      }
+    });
+
+    const merged = Array.from(scores.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ score, doc }) => ({ ...doc, score }));
+
+    response = { results: merged, totalFound: scores.size, searchMode: 'hybrid' };
   }
 
-  // Hybrid: run both, merge with RRF
-  const embedding = await generateEmbedding(options.query);
+  if (!options.include_related) {
+    return response;
+  }
 
-  const [bm25Results, vectorResults] = await Promise.all([
-    fulltextSearch(options.query, limit * 3, where, filters, ro),
-    embedding.length > 0
-      ? vectorSearch(embedding, limit * 3, where, filters, ro)
-      : Promise.resolve({ results: [], totalFound: 0, searchMode: 'vector' }),
-  ]);
+  // Enrich each result with related memories fetched via BFS (ID-based, not vector).
+  const maxDepth = Math.min(options.related_depth ?? 1, 2);
+  const seedIds = new Set(response.results.map((r) => r.id));
 
-  const scores = new Map<string, { score: number; doc: MemorySearchResult }>();
+  const enriched: MemorySearchResultWithRelated[] = await Promise.all(
+    response.results.map(async (result) => {
+      const rootLinks = result.related_ids ?? [];
+      if (rootLinks.length === 0) return result;
+      const related = await fetchRelatedBfs(seedIds, rootLinks, maxDepth);
+      return related.length > 0 ? { ...result, related } : result;
+    })
+  );
 
-  bm25Results.results.forEach((doc, rank) => {
-    const rrf = 1 / (rrfK + rank + 1);
-    const existing = scores.get(doc.id);
-    if (existing) {
-      existing.score += rrf;
-    } else {
-      scores.set(doc.id, { score: rrf, doc });
-    }
-  });
-
-  vectorResults.results.forEach((doc, rank) => {
-    const rrf = 1 / (rrfK + rank + 1);
-    const existing = scores.get(doc.id);
-    if (existing) {
-      existing.score += rrf;
-    } else {
-      scores.set(doc.id, { score: rrf, doc });
-    }
-  });
-
-  const merged = Array.from(scores.values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ score, doc }) => ({ ...doc, score }));
-
-  return { results: merged, totalFound: scores.size, searchMode: 'hybrid' };
+  return { ...response, results: enriched };
 }
 
 async function fulltextSearch(
@@ -553,6 +631,101 @@ export async function deleteMemory(
   } catch (err: any) {
     return { success: false, error: err.message };
   }
+}
+
+export async function getRelatedMemories(
+  rootId: string,
+  depth: number,
+  relationTypes?: string[],
+  includeContent: boolean = false
+): Promise<{
+  root: { id: string; summary: string; tags: string[] } | null;
+  nodes: Array<{
+    id: string;
+    summary: string;
+    content?: string;
+    relation_type: string;
+    depth: number;
+    tags: string[];
+    createdAt: string;
+  }>;
+  error?: string;
+}> {
+  const root = await getMemoryById(rootId);
+  if (!root) {
+    return { root: null, nodes: [], error: `Memory not found: ${rootId}` };
+  }
+
+  const rootNode = {
+    id: root.id,
+    summary: root.summary,
+    tags: root.tags ?? [],
+  };
+
+  const visited = new Set<string>([rootId]);
+  const nodes: Array<{
+    id: string;
+    summary: string;
+    content?: string;
+    relation_type: string;
+    depth: number;
+    tags: string[];
+    createdAt: string;
+  }> = [];
+
+  // BFS queue entries: [memoryId, currentDepth]
+  type QueueEntry = { id: string; relation_type: string; currentDepth: number };
+  const queue: QueueEntry[] = [];
+
+  // Seed the queue from the root's related_ids
+  const rootRelatedIds: RelatedId[] = root.related_ids ?? [];
+  for (const link of rootRelatedIds) {
+    if (relationTypes && !relationTypes.includes(link.relation_type)) continue;
+    if (!visited.has(link.id)) {
+      queue.push({ id: link.id, relation_type: link.relation_type, currentDepth: 1 });
+    }
+  }
+
+  while (queue.length > 0) {
+    const { id, relation_type, currentDepth } = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+
+    const memory = await getMemoryById(id);
+    if (!memory) continue;
+
+    const node: (typeof nodes)[number] = {
+      id: memory.id,
+      summary: memory.summary,
+      relation_type,
+      depth: currentDepth,
+      tags: memory.tags ?? [],
+      createdAt: memory.createdAt,
+    };
+
+    if (includeContent) {
+      node.content = memory.content;
+    }
+
+    nodes.push(node);
+
+    // Only follow links if we haven't reached the depth limit
+    if (currentDepth < depth) {
+      const linkedIds: RelatedId[] = memory.related_ids ?? [];
+      for (const link of linkedIds) {
+        if (relationTypes && !relationTypes.includes(link.relation_type)) continue;
+        if (!visited.has(link.id)) {
+          queue.push({
+            id: link.id,
+            relation_type: link.relation_type,
+            currentDepth: currentDepth + 1,
+          });
+        }
+      }
+    }
+  }
+
+  return { root: rootNode, nodes };
 }
 
 export async function listTags(
