@@ -12,6 +12,9 @@ const configSchema = z.object({
   OLLAMA_MODEL: z.string().default('nomic-embed-text'),
   OLLAMA_TIMEOUT_MS: z.coerce.number().default(5000),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  AIBRAIN_DEFAULT_CLUSTER: z.string().default(''),
+  AIBRAIN_AUTO_LINK_THRESHOLD: z.coerce.number().default(0.85),
+  AIBRAIN_AUTO_LINK_LIMIT: z.coerce.number().default(3),
 });
 
 const parsed = configSchema.safeParse(process.env);

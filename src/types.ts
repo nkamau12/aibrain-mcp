@@ -10,6 +10,14 @@ export interface MemoryDocument {
   createdAt: string;
   metadata: Record<string, unknown>;
   contentAndSummary: string;
+  cluster: string;
+  /** JSON-serialized Array<RelatedId> */
+  related_ids: string;
+}
+
+export interface RelatedId {
+  id: string;
+  relation_type: string;
 }
 
 export interface MemorySearchResult {
@@ -23,6 +31,11 @@ export interface MemorySearchResult {
   createdAt: string;
   metadata?: Record<string, unknown>;
   score?: number;
+  cluster?: string;
+}
+
+export interface MemorySearchResultWithRelated extends MemorySearchResult {
+  related?: RelatedId[];
 }
 
 export interface MemoryFilters {
@@ -32,6 +45,7 @@ export interface MemoryFilters {
   tags?: string[];
   since?: string;
   until?: string;
+  cluster?: string;
 }
 
 export interface ResultOptions {

@@ -118,6 +118,9 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
   if (filters.until) {
     clauses.push(`\`createdAt\` <= '${safeDate(filters.until)}'`);
   }
+  if (filters.cluster !== undefined) {
+    clauses.push(`\`cluster\` = '${escapeStr(filters.cluster)}'`);
+  }
 
   return clauses.join(' AND ');
 }
@@ -152,6 +155,8 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
     } catch {}
   }
 
+  if (row.cluster) result.cluster = row.cluster;
+
   if (row._distance !== undefined) result.score = 1 - row._distance;
   if (row._relevance_score !== undefined) result.score = row._relevance_score;
   if (row._score !== undefined) result.score = row._score;
@@ -160,7 +165,8 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
 }
 
 export async function saveMemory(
-  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary'>
+  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary' | 'cluster' | 'related_ids'> &
+    Partial<Pick<MemoryDocument, 'cluster' | 'related_ids'>>
 ): Promise<string> {
   const table = await getTable();
   const id = uuidv4();
@@ -180,6 +186,8 @@ export async function saveMemory(
     createdAt: new Date().toISOString(),
     metadata: JSON.stringify(input.metadata ?? {}),
     contentAndSummary,
+    cluster: input.cluster ?? '',
+    related_ids: input.related_ids ?? '[]',
   };
 
   await table.add([row]);
@@ -373,6 +381,7 @@ function matchesWhere(row: Record<string, any>, filters?: MemoryFilters): boolea
   if (filters.projectPath !== undefined && row.projectPath !== filters.projectPath) return false;
   if (filters.since && row.createdAt < filters.since) return false;
   if (filters.until && row.createdAt > filters.until) return false;
+  if (filters.cluster !== undefined && row.cluster !== filters.cluster) return false;
   return true;
 }
 
