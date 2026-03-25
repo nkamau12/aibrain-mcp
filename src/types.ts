@@ -17,7 +17,7 @@ export interface MemoryDocument {
 
 export interface RelatedId {
   id: string;
-  relation_type: 'supersedes' | 'caused-by' | 'see-also' | 'follow-up';
+  relation_type: 'supersedes' | 'caused-by' | 'see-also' | 'follow-up' | 'similar';
 }
 
 export interface MemorySearchResult {
