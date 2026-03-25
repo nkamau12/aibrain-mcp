@@ -11,6 +11,7 @@ export const getRecentMemoriesSchema = z.object({
       tags: z.array(z.string()).optional(),
       since: z.string().optional(),
       until: z.string().optional(),
+      include_stale: z.boolean().default(false).describe('Include stale (superseded) memories in results'),
     })
     .optional(),
   includeContent: z.boolean().default(false).describe('Include full content in results (default false — use get_memory for full content)'),

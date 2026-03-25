@@ -379,11 +379,15 @@ export async function appendRelatedIdIfAbsent(
  * entries for each discovered neighbour.  IDs already in `seedIds` (the search
  * result set itself) are excluded so we never return a result as its own related
  * memory.
+ *
+ * When `includeStale` is false (the default), stale nodes are skipped during
+ * traversal so stale memories never surface through the related-enrichment path.
  */
 async function fetchRelatedBfs(
   seedIds: Set<string>,
   rootRelatedIds: RelatedId[],
-  maxDepth: number
+  maxDepth: number,
+  includeStale: boolean = false
 ): Promise<RelatedMemorySummary[]> {
   const visited = new Set<string>(seedIds);
   const summaries: RelatedMemorySummary[] = [];
@@ -411,6 +415,10 @@ async function fetchRelatedBfs(
     for (const item of fetched) {
       if (!item) continue;
       const { mem, entry } = item;
+
+      // Skip stale nodes unless the caller explicitly wants them.
+      if (!includeStale && mem.is_stale) continue;
+
       summaries.push({
         id: mem.id,
         summary: mem.summary,
@@ -453,7 +461,12 @@ export async function searchMemories(options: SearchOptions): Promise<{
 
   // Apply AIBRAIN_DEFAULT_CLUSTER as a pre-filter when no explicit cluster is provided.
   // Callers that pass filters.cluster always win; those that don't get the env default.
+  // Thread include_stale from the top-level option into filters so buildWhereClause
+  // and matchesWhere can enforce it consistently across all search paths.
   let filters = options.filters;
+  if (options.include_stale !== undefined && filters?.include_stale === undefined) {
+    filters = { ...filters, include_stale: options.include_stale };
+  }
   if (config.AIBRAIN_DEFAULT_CLUSTER && filters?.cluster === undefined) {
     filters = { ...filters, cluster: config.AIBRAIN_DEFAULT_CLUSTER };
   }
@@ -522,7 +535,7 @@ export async function searchMemories(options: SearchOptions): Promise<{
     response.results.map(async (result) => {
       const rootLinks = result.related_ids ?? [];
       if (rootLinks.length === 0) return result;
-      const related = await fetchRelatedBfs(seedIds, rootLinks, maxDepth);
+      const related = await fetchRelatedBfs(seedIds, rootLinks, maxDepth, options.include_stale ?? false);
       return related.length > 0 ? { ...result, related } : result;
     })
   );
@@ -725,7 +738,8 @@ export async function getRelatedMemories(
   rootId: string,
   depth: number,
   relationTypes?: string[],
-  includeContent: boolean = false
+  includeContent: boolean = false,
+  includeStale: boolean = false
 ): Promise<{
   root: { id: string; summary: string; tags: string[] } | null;
   nodes: Array<{
@@ -781,6 +795,7 @@ export async function getRelatedMemories(
 
     const memory = await getMemoryById(id);
     if (!memory) continue;
+    if (!includeStale && memory.is_stale) continue;
 
     const node: (typeof nodes)[number] = {
       id: memory.id,
