@@ -17,7 +17,7 @@ export const saveMemorySchema = z.object({
   related_ids: z
     .array(
       z.object({
-        id: z.string(),
+        id: z.string().uuid(),
         relation_type: z.enum(['supersedes', 'caused-by', 'see-also', 'follow-up']),
       })
     )

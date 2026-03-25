@@ -279,10 +279,10 @@ export async function appendRelatedIdIfAbsent(
   if (existing.some((r) => r.id === link.id)) return;
 
   const updated = JSON.stringify([...existing, link]);
-  await table.update(
-    { related_ids: updated },
-    { where: `id = '${escapeSql(safeTargetId)}'` }
-  );
+  await table.update({
+    values: { related_ids: updated },
+    where: `id = '${escapeSql(safeTargetId)}'`,
+  });
 }
 
 export async function searchMemories(options: SearchOptions): Promise<{
