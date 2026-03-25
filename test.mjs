@@ -570,3 +570,250 @@ test('sanitizeFilterValue rejects projectPath exceeding max length', () => {
     'projectPath over 4096 chars should be rejected'
   );
 });
+
+// ── stale memory filtering ────────────────────────────────────────────────────
+
+const STALE_PROJECT = `/test-stale-${Date.now()}`;
+
+let staleMemAId;
+let staleMemBId;
+let staleMemCId;
+let staleMemDId;
+
+test('freshly saved memory has is_stale === false', async () => {
+  staleMemAId = await saveMemory({
+    content: 'Initial approach to authentication using session tokens.',
+    summary: 'Auth: session token approach',
+    tags: ['auth'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: STALE_PROJECT,
+    metadata: {},
+  });
+  assert.match(staleMemAId, /^[0-9a-f-]{36}$/);
+
+  const mem = await getMemoryById(staleMemAId);
+  assert.ok(mem, 'memory A should exist');
+  assert.equal(mem.is_stale, false, 'freshly saved memory should have is_stale === false');
+});
+
+test('supersedes relation marks target memory as stale (fire-and-forget)', async () => {
+  staleMemBId = await saveMemory({
+    content: 'New authentication approach using JWT tokens instead of session tokens.',
+    summary: 'Auth: JWT token approach (supersedes session tokens)',
+    tags: ['auth'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: STALE_PROJECT,
+    metadata: {},
+    related_ids: [{ id: staleMemAId, relation_type: 'supersedes' }],
+  });
+  assert.match(staleMemBId, /^[0-9a-f-]{36}$/);
+
+  // Wait for fire-and-forget stale marking to complete
+  await new Promise((r) => setTimeout(r, 500));
+
+  const memA = await getMemoryById(staleMemAId);
+  assert.ok(memA, 'memory A should still exist');
+  assert.equal(memA.is_stale, true, 'A should be marked stale after B supersedes it');
+});
+
+test('see-also relation does not change stale status of target', async () => {
+  staleMemCId = await saveMemory({
+    content: 'Related context about token expiry policies.',
+    summary: 'Token expiry policy documentation',
+    tags: ['auth', 'policy'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: STALE_PROJECT,
+    metadata: {},
+    related_ids: [{ id: staleMemAId, relation_type: 'see-also' }],
+  });
+  assert.match(staleMemCId, /^[0-9a-f-]{36}$/);
+
+  // Wait for fire-and-forget back-link to complete
+  await new Promise((r) => setTimeout(r, 500));
+
+  const memA = await getMemoryById(staleMemAId);
+  assert.ok(memA, 'memory A should still exist');
+  assert.equal(memA.is_stale, true, 'see-also must not un-stale A — it should remain stale');
+});
+
+test('caused-by relation does not mark target as stale', async () => {
+  staleMemDId = await saveMemory({
+    content: 'Deployment incident caused by JWT migration rollout.',
+    summary: 'Incident: JWT rollout deployment failure',
+    tags: ['incident'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: STALE_PROJECT,
+    metadata: {},
+    related_ids: [{ id: staleMemBId, relation_type: 'caused-by' }],
+  });
+  assert.match(staleMemDId, /^[0-9a-f-]{36}$/);
+
+  // Wait for fire-and-forget back-link to complete
+  await new Promise((r) => setTimeout(r, 500));
+
+  const memB = await getMemoryById(staleMemBId);
+  assert.ok(memB, 'memory B should still exist');
+  assert.equal(memB.is_stale, false, 'caused-by must not mark B as stale');
+});
+
+test('searchMemories without include_stale excludes stale memories', async () => {
+  // Wait for FTS index rebuild
+  await new Promise((r) => setTimeout(r, 1500));
+
+  const { results } = await searchMemories({
+    query: 'session token approach',
+    searchMode: 'fulltext',
+    limit: 10,
+    filters: { projectPath: STALE_PROJECT },
+  });
+
+  const ids = results.map((r) => r.id);
+  assert.ok(!ids.includes(staleMemAId), 'stale memory A should be excluded by default');
+});
+
+test('searchMemories with include_stale: true returns stale memories with is_stale flag', async () => {
+  const { results } = await searchMemories({
+    query: 'session token approach',
+    searchMode: 'fulltext',
+    limit: 10,
+    filters: { projectPath: STALE_PROJECT },
+    include_stale: true,
+  });
+
+  const memA = results.find((r) => r.id === staleMemAId);
+  assert.ok(memA, 'stale memory A should be included when include_stale is true');
+  assert.equal(memA.is_stale, true, 'stale memory should have is_stale === true');
+});
+
+test('getRecentMemories without include_stale excludes stale memories', async () => {
+  const { memories } = await getRecentMemories(50, { projectPath: STALE_PROJECT });
+  const ids = memories.map((m) => m.id);
+  assert.ok(!ids.includes(staleMemAId), 'stale memory A should be excluded from recent by default');
+});
+
+test('getRecentMemories with include_stale: true returns stale memories', async () => {
+  const { memories } = await getRecentMemories(50, {
+    projectPath: STALE_PROJECT,
+    include_stale: true,
+  });
+  const memA = memories.find((m) => m.id === staleMemAId);
+  assert.ok(memA, 'stale memory A should appear when include_stale is true');
+  assert.equal(memA.is_stale, true, 'stale memory should have is_stale === true');
+});
+
+test('getRecentMemories with no filters does not return stale memories (regression)', async () => {
+  // Regression test for the absent-filters bug: no filters at all should still
+  // exclude stale memories, not leak them through via a missing WHERE clause.
+  const { memories } = await getRecentMemories(50);
+  const ids = memories.map((m) => m.id);
+  assert.ok(!ids.includes(staleMemAId), 'stale memory must not leak when no filters are passed');
+});
+
+test('getMemoryById always returns stale memory (explicit fetch is unfiltered)', async () => {
+  const mem = await getMemoryById(staleMemAId);
+  assert.ok(mem, 'getMemoryById should return a stale memory regardless of stale status');
+  assert.equal(mem.id, staleMemAId);
+  assert.equal(mem.is_stale, true, 'returned memory should carry is_stale === true');
+});
+
+test('getRelatedMemories skips stale nodes by default (BFS pruning)', async () => {
+  // Chain: C (non-stale) -> A (stale). Traversing from C should skip A.
+  const result = await getRelatedMemories(staleMemCId, 2);
+  assert.ok(result.root, 'should return a root node for C');
+  assert.equal(result.root.id, staleMemCId);
+
+  const nodeIds = result.nodes.map((n) => n.id);
+  assert.ok(!nodeIds.includes(staleMemAId), 'stale node A should be pruned from BFS by default');
+});
+
+test('getRelatedMemories with includeStale: true returns stale nodes with is_stale flag', async () => {
+  const result = await getRelatedMemories(staleMemCId, 2, undefined, false, true);
+  assert.ok(result.root, 'should return a root node for C');
+
+  const nodeA = result.nodes.find((n) => n.id === staleMemAId);
+  assert.ok(nodeA, 'stale node A should be included when includeStale is true');
+  assert.equal(nodeA.is_stale, true, 'A node should carry is_stale === true');
+});
+
+test('stale subtree is unreachable from non-stale node unless includeStale is true', async () => {
+  // A is stale and has a back-link to C (see-also). If A links to any node D,
+  // D should also be unreachable unless includeStale is set. Here we verify
+  // that BFS does not follow links beyond a stale node when includeStale is false.
+  //
+  // We use the existing chain: staleMemBId -> staleMemAId (superseded).
+  // staleMemAId has a back-link to staleMemBId. A is stale, so B's links
+  // to D via A are unreachable without includeStale.
+  //
+  // Create a dedicated chain: non-stale root -> stale intermediate -> leaf.
+  const subtreeProject = `/test-stale-subtree-${Date.now()}`;
+
+  const leafId = await saveMemory({
+    content: 'Leaf node that should be unreachable through stale intermediate.',
+    summary: 'Stale subtree leaf',
+    tags: ['test'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: subtreeProject,
+    metadata: {},
+  });
+
+  const staleIntermediateId = await saveMemory({
+    content: 'Stale intermediate node in subtree test.',
+    summary: 'Stale intermediate',
+    tags: ['test'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: subtreeProject,
+    metadata: {},
+    related_ids: [{ id: leafId, relation_type: 'see-also' }],
+  });
+
+  const nonStaleRootId = await saveMemory({
+    content: 'Non-stale root that links to a soon-to-be-stale intermediate.',
+    summary: 'Non-stale root',
+    tags: ['test'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: subtreeProject,
+    metadata: {},
+    related_ids: [{ id: staleIntermediateId, relation_type: 'see-also' }],
+  });
+
+  // Wait for FTS index rebuild and back-link fire-and-forget from the two saves above
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // Supersede the intermediate to make it stale
+  await saveMemory({
+    content: 'Supersedes the intermediate node.',
+    summary: 'Superseder of stale intermediate',
+    tags: ['test'],
+    agentName: 'test-agent',
+    sessionId: 'test-session',
+    projectPath: subtreeProject,
+    metadata: {},
+    related_ids: [{ id: staleIntermediateId, relation_type: 'supersedes' }],
+  });
+
+  // Wait for fire-and-forget stale marking to complete
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // Verify intermediate is now stale
+  const intermediate = await getMemoryById(staleIntermediateId);
+  assert.equal(intermediate.is_stale, true, 'intermediate should be stale after being superseded');
+
+  // BFS from non-stale root without includeStale: leaf should be unreachable
+  const resultDefault = await getRelatedMemories(nonStaleRootId, 3);
+  const defaultNodeIds = resultDefault.nodes.map((n) => n.id);
+  assert.ok(!defaultNodeIds.includes(staleIntermediateId), 'stale intermediate should be pruned');
+  assert.ok(!defaultNodeIds.includes(leafId), 'leaf behind stale node should be unreachable');
+
+  // BFS with includeStale: true — both intermediate and leaf should be reachable
+  const resultWithStale = await getRelatedMemories(nonStaleRootId, 3, undefined, false, true);
+  const staleNodeIds = resultWithStale.nodes.map((n) => n.id);
+  assert.ok(staleNodeIds.includes(staleIntermediateId), 'stale intermediate should appear with includeStale');
+  assert.ok(staleNodeIds.includes(leafId), 'leaf behind stale node should be reachable with includeStale');
+});

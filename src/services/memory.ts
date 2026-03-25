@@ -677,7 +677,16 @@ export async function getRecentMemories(
 ): Promise<{ memories: MemorySearchResult[]; total: number }> {
   const table = await getTable();
   const safeLimit = Math.min(limit, 100);
-  const where = buildWhereClause(filters);
+  // Always apply the stale guard even when the caller passes no filters at all.
+  // Without this, buildWhereClause receives undefined, short-circuits, and
+  // omits the is_stale clause — leaking stale rows to callers that didn't ask
+  // for them. The tool-layer fix in handleGetRecentMemories is belt-and-suspenders;
+  // this is the authoritative guard at the service boundary.
+  const effectiveFilters: MemoryFilters = filters ?? { include_stale: false };
+  if (effectiveFilters.include_stale === undefined) {
+    effectiveFilters.include_stale = false;
+  }
+  const where = buildWhereClause(effectiveFilters);
 
   // Fetch all matching rows so where + tag filtering don't under-return.
   // LanceDB defaults to limit=10 without an explicit .limit() call.
@@ -685,7 +694,7 @@ export async function getRecentMemories(
   if (where) q = q.where(where);
 
   const rows = await q.toArray();
-  const filtered = applyTagFilter(rows, filters?.tags);
+  const filtered = applyTagFilter(rows, effectiveFilters.tags);
 
   // Sort by createdAt descending then apply limit
   filtered.sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
