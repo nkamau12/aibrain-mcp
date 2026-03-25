@@ -215,16 +215,27 @@ export async function saveMemory(
 
   await table.add([row]);
 
-  // Create reverse (back) links on every referenced memory.
-  // Fire-and-forget so back-linking failures do not block the caller.
+  // Create reverse (back) links on every referenced memory, and mark superseded
+  // memories as stale. Both operations are fire-and-forget so failures do not
+  // block the caller or prevent the save from succeeding.
   if (input.related_ids && input.related_ids.length > 0) {
     Promise.all(
-      input.related_ids.map((link) =>
-        appendRelatedIdIfAbsent(link.id, {
+      input.related_ids.map(async (link) => {
+        await appendRelatedIdIfAbsent(link.id, {
           id,
           relation_type: reverseRelationType(link.relation_type),
-        })
-      )
+        });
+
+        // Only "supersedes" triggers staleness — similar, caused-by, see-also,
+        // and follow-up must not mark the target stale.
+        if (link.relation_type === 'supersedes') {
+          const safeId = validateUuid(link.id);
+          await table.update({
+            values: { is_stale: true },
+            where: `id = '${escapeSql(safeId)}'`,
+          });
+        }
+      })
     ).catch((err) => {
       console.error('[aibrain] Back-linking error:', err);
     });
