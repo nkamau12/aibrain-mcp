@@ -26,8 +26,8 @@ const SCHEMA = new arrow.Schema([
   new arrow.Field('createdAt', new arrow.Utf8(), false),
   new arrow.Field('metadata', new arrow.Utf8(), false),
   new arrow.Field('contentAndSummary', new arrow.Utf8(), false),
-  new arrow.Field('cluster', new arrow.Utf8(), false),
-  new arrow.Field('related_ids', new arrow.Utf8(), false),
+  new arrow.Field('cluster', new arrow.Utf8(), true),
+  new arrow.Field('related_ids', new arrow.Utf8(), true),
 ]);
 
 let _table: lancedb.Table | null = null;

@@ -119,7 +119,8 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
     clauses.push(`\`createdAt\` <= '${safeDate(filters.until)}'`);
   }
   if (filters.cluster !== undefined) {
-    clauses.push(`\`cluster\` = '${escapeStr(filters.cluster)}'`);
+    const v = sanitizeFilterValue(filters.cluster, 'cluster');
+    clauses.push(`\`cluster\` = '${escapeSql(v)}'`);
   }
 
   return clauses.join(' AND ');
@@ -420,13 +421,13 @@ export async function getRecentMemories(
 }
 
 export async function getMemoryById(id: string): Promise<MemorySearchResult | null> {
-  // Validate before constructing the WHERE clause — UUIDs are safe to interpolate
-  // directly once validated (they contain only hex digits and hyphens), but we
-  // still apply escapeSql for belt-and-suspenders consistency.
-  const safeId = validateUuid(id);
-  const table = await getTable();
-
   try {
+    // Validate before constructing the WHERE clause — UUIDs are safe to interpolate
+    // directly once validated (they contain only hex digits and hyphens), but we
+    // still apply escapeSql for belt-and-suspenders consistency.
+    const safeId = validateUuid(id);
+    const table = await getTable();
+
     const rows = await table
       .query()
       .where(`id = '${escapeSql(safeId)}'`)
