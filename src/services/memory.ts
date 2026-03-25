@@ -127,6 +127,10 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
     clauses.push(`\`cluster\` = '${escapeSql(v)}'`);
   }
 
+  if (!filters.include_stale) {
+    clauses.push(`\`is_stale\` = false`);
+  }
+
   return clauses.join(' AND ');
 }
 
@@ -627,6 +631,7 @@ function matchesWhere(row: Record<string, any>, filters?: MemoryFilters): boolea
   if (filters.since && row.createdAt < filters.since) return false;
   if (filters.until && row.createdAt > filters.until) return false;
   if (filters.cluster !== undefined && row.cluster !== filters.cluster) return false;
+  if (!filters.include_stale && row.is_stale === true) return false;
   return true;
 }
 
