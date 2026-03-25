@@ -26,6 +26,8 @@ const SCHEMA = new arrow.Schema([
   new arrow.Field('createdAt', new arrow.Utf8(), false),
   new arrow.Field('metadata', new arrow.Utf8(), false),
   new arrow.Field('contentAndSummary', new arrow.Utf8(), false),
+  new arrow.Field('cluster', new arrow.Utf8(), true),
+  new arrow.Field('related_ids', new arrow.Utf8(), true),
 ]);
 
 let _table: lancedb.Table | null = null;
@@ -59,6 +61,7 @@ export async function getTable(): Promise<lancedb.Table> {
     await _table.createIndex('projectPath', { config: lancedb.Index.btree(), replace: true });
     await _table.createIndex('sessionId', { config: lancedb.Index.btree(), replace: true });
     await _table.createIndex('createdAt', { config: lancedb.Index.btree(), replace: true });
+    await _table.createIndex('cluster', { config: lancedb.Index.btree(), replace: true });
     console.error('[aibrain] Scalar indexes created');
   } else {
     _table = await conn.openTable(TABLE_NAME);
