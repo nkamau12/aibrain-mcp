@@ -18,7 +18,7 @@ npx -y @aibrain/mcp --setup-ui ~/projects   # custom location
 
 ## Features
 
-- **8 memory tools**: `save_memory`, `search_memories`, `get_recent_memories`, `get_memory`, `get_related_memories`, `delete_memory`, `list_tags`
+- **7 memory tools**: `save_memory`, `search_memories`, `get_recent_memories`, `get_memory`, `get_related_memories`, `delete_memory`, `list_tags`
 - **Hybrid search**: BM25 full-text + vector semantic search with Reciprocal Rank Fusion
 - **Zero external dependencies**: embedded LanceDB + local ONNX embeddings via Transformers.js — no separate server needed
 - **Persistent storage**: memories saved to `~/.aibrain/memories` by default
@@ -96,8 +96,8 @@ Add to `~/.config/amp/settings.json` (global) or `.amp/settings.json` in your pr
 |---------------------|---------|-------------|
 | `AIBRAIN_DATA_DIR` | `~/.aibrain/memories` | Where memories are stored |
 | `AIBRAIN_DEFAULT_CLUSTER` | _(none)_ | Default cluster applied to every saved memory when `cluster` is not explicitly set |
-| `AIBRAIN_AUTO_LINK_THRESHOLD` | `0.75` | Cosine similarity threshold above which a newly saved memory is automatically linked to similar existing ones |
-| `AIBRAIN_AUTO_LINK_LIMIT` | `5` | Maximum number of auto-links created per save |
+| `AIBRAIN_AUTO_LINK_THRESHOLD` | `0.85` | Cosine similarity threshold above which a newly saved memory is automatically linked to similar existing ones |
+| `AIBRAIN_AUTO_LINK_LIMIT` | `3` | Maximum number of auto-links created per save |
 | `EMBEDDING_PROVIDER` | `transformers` | Embedding backend: `transformers` or `ollama` |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL (only used when `EMBEDDING_PROVIDER=ollama`) |
 | `OLLAMA_MODEL` | `nomic-embed-text` | Ollama embedding model (only used when `EMBEDDING_PROVIDER=ollama`) |
@@ -143,7 +143,7 @@ Key fields:
 - `content` — full detail
 - `tags` — lowercase kebab-case array (e.g. `["bug-fix", "architecture"]`)
 - `cluster` — subsystem or domain label in lowercase kebab-case (e.g. `"auth-system"`, `"payment-flow"`). Used to scope searches to a subsystem. Falls back to `AIBRAIN_DEFAULT_CLUSTER` if not set.
-- `related_ids` — array of objects linking this memory to others: `{ "id": "<uuid>", "relation_type": "supersedes" | "caused-by" | "see-also" | "follow-up" }`. Back-links are created automatically.
+- `related_ids` — array of objects linking this memory to others: `{ "id": "<uuid>", "relation_type": "supersedes" | "caused-by" | "see-also" | "follow-up" | "similar" (auto-assigned) }`. Back-links are created automatically. Note: `similar` is assigned automatically by the system when auto-linking fires — do not set it manually.
 
 ### `search_memories`
 Hybrid BM25 + vector search with Reciprocal Rank Fusion. Falls back to fulltext if embeddings are unavailable.
@@ -158,7 +158,7 @@ Traverse the memory graph starting from a single memory.
 Inputs:
 - `id` — starting memory UUID
 - `depth` _(1–3)_ — how many hops to follow
-- `relation_types` — optional filter: `["supersedes", "caused-by", "see-also", "follow-up"]`
+- `relation_types` — optional filter: `["supersedes", "caused-by", "see-also", "follow-up", "similar"]` (`similar` is auto-assigned by the system)
 - `include_content` _(boolean)_ — whether to include full content in results (default false)
 
 Use this when a search result has interesting neighbours and you want to follow the chain deeper. Don't traverse every result automatically — only when the chain looks directly relevant.
@@ -256,7 +256,7 @@ When saving:
 - `summary`: under 200 chars
 - `content`: full detail
 - `related_ids`: link to any recently retrieved memories with the appropriate
-  `relation_type` (supersedes, caused-by, follow-up, see-also)
+  `relation_type` (supersedes, caused-by, follow-up, see-also, similar — auto-assigned)
 
 When a search result has neighbours (via `include_related`), use
 `get_related_memories` to traverse deeper only when the chain looks
