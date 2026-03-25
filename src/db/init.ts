@@ -44,6 +44,39 @@ export function resetTableCache(): void {
   _table = null;
 }
 
+/**
+ * Idempotently add columns that were introduced after the initial schema.
+ * Called only for pre-existing tables; new tables are created with the full schema.
+ */
+async function migrateSchema(table: lancedb.Table): Promise<void> {
+  const schema = await table.schema();
+  const columnNames = new Set(schema.fields.map((f) => f.name));
+
+  const columnsToAdd: Array<{ name: string; valueSql: string }> = [];
+  if (!columnNames.has('cluster'))     columnsToAdd.push({ name: 'cluster',     valueSql: "''" });
+  if (!columnNames.has('related_ids')) columnsToAdd.push({ name: 'related_ids', valueSql: "'[]'" });
+  if (!columnNames.has('is_stale'))    columnsToAdd.push({ name: 'is_stale',    valueSql: 'false' });
+
+  if (columnsToAdd.length > 0) {
+    for (const col of columnsToAdd) {
+      await table.addColumns([col]);
+    }
+    console.error(
+      `[aibrain] Migrated database schema (added ${columnsToAdd.length} column(s): ${columnsToAdd.map((c) => c.name).join(', ')})`
+    );
+  }
+
+  // Ensure the btree index on `cluster` exists (needed for scalar filtering).
+  try {
+    const indices = await table.listIndices();
+    if (!indices.some((i) => i.columns.includes('cluster'))) {
+      await table.createIndex('cluster', { config: lancedb.Index.btree(), replace: true });
+    }
+  } catch (err: any) {
+    console.error('[aibrain] Could not verify/create cluster index:', err.message);
+  }
+}
+
 export async function getTable(): Promise<lancedb.Table> {
   if (_table) return _table;
 
@@ -67,6 +100,10 @@ export async function getTable(): Promise<lancedb.Table> {
   } else {
     _table = await conn.openTable(TABLE_NAME);
     console.error(`[aibrain] Opened existing table: ${TABLE_NAME}`);
+
+    // Migrate schema: add columns introduced after the initial release.
+    // We add one column at a time because the SDK may not support batching.
+    await migrateSchema(_table);
 
     // Check if FTS index already exists
     try {
