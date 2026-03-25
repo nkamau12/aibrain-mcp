@@ -12,6 +12,10 @@ export const getRelatedMemoriesSchema = z.object({
     .boolean()
     .default(false)
     .describe('Whether to include full content in each returned node'),
+  include_stale: z
+    .boolean()
+    .default(false)
+    .describe('Include stale (superseded) memories in traversal'),
 });
 
 export async function handleGetRelatedMemories(args: unknown) {
@@ -20,7 +24,8 @@ export async function handleGetRelatedMemories(args: unknown) {
     input.id,
     input.depth,
     input.relation_types,
-    input.include_content
+    input.include_content,
+    input.include_stale
   );
   return {
     content: [

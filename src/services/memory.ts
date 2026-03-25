@@ -368,11 +368,16 @@ export async function appendRelatedIdIfAbsent(
  * entries for each discovered neighbour.  IDs already in `seedIds` (the search
  * result set itself) are excluded so we never return a result as its own related
  * memory.
+ *
+ * When `includeStale` is false (the default), stale nodes are skipped during
+ * traversal — they are neither returned nor followed, pruning stale branches
+ * entirely.  When true, stale nodes are included and tagged with `is_stale: true`.
  */
 async function fetchRelatedBfs(
   seedIds: Set<string>,
   rootRelatedIds: RelatedId[],
-  maxDepth: number
+  maxDepth: number,
+  includeStale: boolean = false
 ): Promise<RelatedMemorySummary[]> {
   const visited = new Set<string>(seedIds);
   const summaries: RelatedMemorySummary[] = [];
@@ -400,12 +405,18 @@ async function fetchRelatedBfs(
     for (const item of fetched) {
       if (!item) continue;
       const { mem, entry } = item;
-      summaries.push({
+      // Skip stale nodes unless the caller explicitly wants them — don't add
+      // to results and don't follow their links so stale branches are pruned.
+      if (mem.is_stale && !includeStale) continue;
+
+      const summary: RelatedMemorySummary = {
         id: mem.id,
         summary: mem.summary,
         relation_type: entry.relation_type,
         depth: entry.depth,
-      });
+      };
+      if (mem.is_stale) summary.is_stale = true;
+      summaries.push(summary);
 
       // Expand one more hop if depth budget allows
       if (entry.depth < maxDepth && mem.related_ids) {
@@ -714,7 +725,8 @@ export async function getRelatedMemories(
   rootId: string,
   depth: number,
   relationTypes?: string[],
-  includeContent: boolean = false
+  includeContent: boolean = false,
+  includeStale: boolean = false
 ): Promise<{
   root: { id: string; summary: string; tags: string[] } | null;
   nodes: Array<{
@@ -725,6 +737,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }>;
   error?: string;
 }> {
@@ -748,6 +761,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }> = [];
 
   // BFS queue entries: [memoryId, currentDepth]
@@ -771,6 +785,10 @@ export async function getRelatedMemories(
     const memory = await getMemoryById(id);
     if (!memory) continue;
 
+    // Skip stale nodes unless the caller explicitly wants them — don't add
+    // to results and don't follow their links so stale branches are pruned.
+    if (memory.is_stale && !includeStale) continue;
+
     const node: (typeof nodes)[number] = {
       id: memory.id,
       summary: memory.summary,
@@ -782,6 +800,9 @@ export async function getRelatedMemories(
 
     if (includeContent) {
       node.content = memory.content;
+    }
+    if (memory.is_stale) {
+      node.is_stale = true;
     }
 
     nodes.push(node);
