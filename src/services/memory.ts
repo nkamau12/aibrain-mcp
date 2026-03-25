@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getTable, rebuildFtsIndex, isFtsIndexed } from '../db/init.js';
 import { generateEmbedding, isEmbeddingAvailable } from './embedding.js';
+import { config } from '../config.js';
 import type {
   MemoryDocument,
   MemorySearchResult,
@@ -8,21 +9,22 @@ import type {
   SearchOptions,
   ResultOptions,
   TagCount,
+  RelatedId,
 } from '../types.js';
 
 // LanceDB applies a default limit of 10 to query().toArray() if no limit is set.
 // Use this constant to fetch all rows when we need the full dataset.
 const QUERY_ALL_LIMIT = 1_000_000;
 
-// ── Input validation constants ────────────────────────────────────────────────
+// -- Input validation constants ------------------------------------------------
 
 const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLUSTER_RE = /^[a-z0-9-]{1,64}$/;
 
-// Control characters (U+0000–U+001F, U+007F) are never valid in filter strings.
+// Control characters (U+0000-U+001F, U+007F) are never valid in filter strings.
 // Null bytes and common SQL comment sequences are explicitly caught here even
-// though LanceDB's SQL engine may not be exploitable via them — defence in depth.
+// though LanceDB's SQL engine may not be exploitable via them -- defence in depth.
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
 
 const MAX_FILTER_LENGTH: Record<string, number> = {
@@ -32,7 +34,7 @@ const MAX_FILTER_LENGTH: Record<string, number> = {
   cluster: 64,
 };
 
-// ── Validation helpers ────────────────────────────────────────────────────────
+// -- Validation helpers --------------------------------------------------------
 
 /**
  * Centralised filter-value validator. Validates value according to
@@ -174,8 +176,11 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
 }
 
 export async function saveMemory(
-  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary' | 'cluster' | 'related_ids'> &
-    Partial<Pick<MemoryDocument, 'cluster' | 'related_ids'>>
+  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary' | 'cluster' | 'related_ids'> & {
+    cluster?: string;
+    // Callers pass structured RelatedId objects; the service serializes to JSON for storage.
+    related_ids?: RelatedId[];
+  }
 ): Promise<string> {
   const table = await getTable();
   const id = uuidv4();
@@ -196,7 +201,7 @@ export async function saveMemory(
     metadata: JSON.stringify(input.metadata ?? {}),
     contentAndSummary,
     cluster: input.cluster ?? '',
-    related_ids: input.related_ids ?? '[]',
+    related_ids: input.related_ids ? JSON.stringify(input.related_ids) : '[]',
   };
 
   await table.add([row]);
@@ -255,7 +260,7 @@ export async function appendRelatedIdIfAbsent(
     .limit(1)
     .toArray();
 
-  // Target memory has been deleted — skip silently.
+  // Target memory has been deleted -- skip silently.
   if (rows.length === 0) return;
 
   const targetRow = rows[0];
@@ -298,27 +303,35 @@ export async function searchMemories(options: SearchOptions): Promise<{
   }
 
   const ro = options.resultOptions;
-  const where = buildWhereClause(options.filters);
+
+  // Apply AIBRAIN_DEFAULT_CLUSTER as a pre-filter when no explicit cluster is provided.
+  // Callers that pass filters.cluster always win; those that don't get the env default.
+  let filters = options.filters;
+  if (config.AIBRAIN_DEFAULT_CLUSTER && filters?.cluster === undefined) {
+    filters = { ...filters, cluster: config.AIBRAIN_DEFAULT_CLUSTER };
+  }
+
+  const where = buildWhereClause(filters);
 
   if (mode === 'fulltext') {
-    return fulltextSearch(options.query, limit, where, options.filters, ro);
+    return fulltextSearch(options.query, limit, where, filters, ro);
   }
 
   if (mode === 'vector') {
     const embedding = await generateEmbedding(options.query);
     if (embedding.length === 0) {
-      return fulltextSearch(options.query, limit, where, options.filters, ro);
+      return fulltextSearch(options.query, limit, where, filters, ro);
     }
-    return vectorSearch(embedding, limit, where, options.filters, ro);
+    return vectorSearch(embedding, limit, where, filters, ro);
   }
 
   // Hybrid: run both, merge with RRF
   const embedding = await generateEmbedding(options.query);
 
   const [bm25Results, vectorResults] = await Promise.all([
-    fulltextSearch(options.query, limit * 3, where, options.filters, ro),
+    fulltextSearch(options.query, limit * 3, where, filters, ro),
     embedding.length > 0
-      ? vectorSearch(embedding, limit * 3, where, options.filters, ro)
+      ? vectorSearch(embedding, limit * 3, where, filters, ro)
       : Promise.resolve({ results: [], totalFound: 0, searchMode: 'vector' }),
   ]);
 
@@ -377,7 +390,7 @@ async function fulltextSearch(
           searchMode: 'fulltext',
         };
       }
-      // FTS returned 0 results after filtering — fall through to manual scan
+      // FTS returned 0 results after filtering -- fall through to manual scan
     } catch (err: any) {
       console.error('[aibrain] FTS index search failed, falling back to scan:', err.message);
     }
@@ -503,7 +516,7 @@ export async function getRecentMemories(
 
 export async function getMemoryById(id: string): Promise<MemorySearchResult | null> {
   try {
-    // Validate before constructing the WHERE clause — UUIDs are safe to interpolate
+    // Validate before constructing the WHERE clause -- UUIDs are safe to interpolate
     // directly once validated (they contain only hex digits and hyphens), but we
     // still apply escapeSql for belt-and-suspenders consistency.
     const safeId = validateUuid(id);
