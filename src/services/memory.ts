@@ -419,12 +419,14 @@ async function fetchRelatedBfs(
       // Skip stale nodes unless the caller explicitly wants them.
       if (!includeStale && mem.is_stale) continue;
 
-      summaries.push({
+      const summary: RelatedMemorySummary = {
         id: mem.id,
         summary: mem.summary,
         relation_type: entry.relation_type,
         depth: entry.depth,
-      });
+      };
+      if (mem.is_stale) summary.is_stale = true;
+      summaries.push(summary);
 
       // Expand one more hop if depth budget allows
       if (entry.depth < maxDepth && mem.related_ids) {
@@ -750,6 +752,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }>;
   error?: string;
 }> {
@@ -773,6 +776,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }> = [];
 
   // BFS queue entries: [memoryId, currentDepth]
@@ -808,6 +812,9 @@ export async function getRelatedMemories(
 
     if (includeContent) {
       node.content = memory.content;
+    }
+    if (memory.is_stale) {
+      node.is_stale = true;
     }
 
     nodes.push(node);
