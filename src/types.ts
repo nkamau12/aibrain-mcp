@@ -17,7 +17,7 @@ export interface MemoryDocument {
 
 export interface RelatedId {
   id: string;
-  relation_type: string;
+  relation_type: 'supersedes' | 'caused-by' | 'see-also' | 'follow-up';
 }
 
 export interface MemorySearchResult {
@@ -32,6 +32,7 @@ export interface MemorySearchResult {
   metadata?: Record<string, unknown>;
   score?: number;
   cluster?: string;
+  related_ids?: RelatedId[];
 }
 
 export interface MemorySearchResultWithRelated extends MemorySearchResult {
