@@ -215,16 +215,27 @@ export async function saveMemory(
 
   await table.add([row]);
 
-  // Create reverse (back) links on every referenced memory.
-  // Fire-and-forget so back-linking failures do not block the caller.
+  // Create reverse (back) links on every referenced memory, and mark superseded
+  // memories as stale. Both operations are fire-and-forget so failures do not
+  // block the caller or prevent the save from succeeding.
   if (input.related_ids && input.related_ids.length > 0) {
     Promise.all(
-      input.related_ids.map((link) =>
-        appendRelatedIdIfAbsent(link.id, {
+      input.related_ids.map(async (link) => {
+        await appendRelatedIdIfAbsent(link.id, {
           id,
           relation_type: reverseRelationType(link.relation_type),
-        })
-      )
+        });
+
+        // Only "supersedes" triggers staleness — similar, caused-by, see-also,
+        // and follow-up must not mark the target stale.
+        if (link.relation_type === 'supersedes') {
+          const safeId = validateUuid(link.id);
+          await table.update({
+            values: { is_stale: true },
+            where: `id = '${escapeSql(safeId)}'`,
+          });
+        }
+      })
     ).catch((err) => {
       console.error('[aibrain] Back-linking error:', err);
     });
@@ -408,12 +419,14 @@ async function fetchRelatedBfs(
       // Skip stale nodes unless the caller explicitly wants them.
       if (!includeStale && mem.is_stale) continue;
 
-      summaries.push({
+      const summary: RelatedMemorySummary = {
         id: mem.id,
         summary: mem.summary,
         relation_type: entry.relation_type,
         depth: entry.depth,
-      });
+      };
+      if (mem.is_stale) summary.is_stale = true;
+      summaries.push(summary);
 
       // Expand one more hop if depth budget allows
       if (entry.depth < maxDepth && mem.related_ids) {
@@ -727,7 +740,8 @@ export async function getRelatedMemories(
   rootId: string,
   depth: number,
   relationTypes?: string[],
-  includeContent: boolean = false
+  includeContent: boolean = false,
+  includeStale: boolean = false
 ): Promise<{
   root: { id: string; summary: string; tags: string[] } | null;
   nodes: Array<{
@@ -738,6 +752,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }>;
   error?: string;
 }> {
@@ -761,6 +776,7 @@ export async function getRelatedMemories(
     depth: number;
     tags: string[];
     createdAt: string;
+    is_stale?: boolean;
   }> = [];
 
   // BFS queue entries: [memoryId, currentDepth]
@@ -783,6 +799,7 @@ export async function getRelatedMemories(
 
     const memory = await getMemoryById(id);
     if (!memory) continue;
+    if (!includeStale && memory.is_stale) continue;
 
     const node: (typeof nodes)[number] = {
       id: memory.id,
@@ -795,6 +812,9 @@ export async function getRelatedMemories(
 
     if (includeContent) {
       node.content = memory.content;
+    }
+    if (memory.is_stale) {
+      node.is_stale = true;
     }
 
     nodes.push(node);

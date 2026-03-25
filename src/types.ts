@@ -42,6 +42,7 @@ export interface RelatedMemorySummary {
   summary: string;
   relation_type: RelatedId['relation_type'];
   depth: number;
+  is_stale?: boolean;
 }
 
 export interface MemorySearchResultWithRelated extends MemorySearchResult {
