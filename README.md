@@ -18,7 +18,7 @@ npx -y @aibrain/mcp --setup-ui ~/projects   # custom location
 
 ## Features
 
-- **6 memory tools**: `save_memory`, `search_memories`, `get_recent_memories`, `get_memory`, `delete_memory`, `list_tags`
+- **7 memory tools**: `save_memory`, `search_memories`, `get_recent_memories`, `get_memory`, `get_related_memories`, `delete_memory`, `list_tags`
 - **Hybrid search**: BM25 full-text + vector semantic search with Reciprocal Rank Fusion
 - **Zero external dependencies**: embedded LanceDB + local ONNX embeddings via Transformers.js — no separate server needed
 - **Persistent storage**: memories saved to `~/.aibrain/memories` by default
@@ -95,6 +95,9 @@ Add to `~/.config/amp/settings.json` (global) or `.amp/settings.json` in your pr
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `AIBRAIN_DATA_DIR` | `~/.aibrain/memories` | Where memories are stored |
+| `AIBRAIN_DEFAULT_CLUSTER` | _(none)_ | Default cluster applied to every saved memory when `cluster` is not explicitly set |
+| `AIBRAIN_AUTO_LINK_THRESHOLD` | `0.85` | Cosine similarity threshold above which a newly saved memory is automatically linked to similar existing ones |
+| `AIBRAIN_AUTO_LINK_LIMIT` | `3` | Maximum number of auto-links created per save |
 | `EMBEDDING_PROVIDER` | `transformers` | Embedding backend: `transformers` or `ollama` |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL (only used when `EMBEDDING_PROVIDER=ollama`) |
 | `OLLAMA_MODEL` | `nomic-embed-text` | Ollama embedding model (only used when `EMBEDDING_PROVIDER=ollama`) |
@@ -134,8 +137,31 @@ Set these in your shell profile or pass them via `env` in your MCP client config
 ### `save_memory`
 Save a memory with content, summary, tags, and metadata.
 
+Key fields:
+- `projectPath` — absolute path of the working directory (or `""` for global context)
+- `summary` — under 200 chars; shown in search result lists
+- `content` — full detail
+- `tags` — lowercase kebab-case array (e.g. `["bug-fix", "architecture"]`)
+- `cluster` — subsystem or domain label in lowercase kebab-case (e.g. `"auth-system"`, `"payment-flow"`). Used to scope searches to a subsystem. Falls back to `AIBRAIN_DEFAULT_CLUSTER` if not set.
+- `related_ids` — array of objects linking this memory to others: `{ "id": "<uuid>", "relation_type": "supersedes" | "caused-by" | "see-also" | "follow-up" | "similar" (auto-assigned) }`. Back-links are created automatically. Note: `similar` is assigned automatically by the system when auto-linking fires — do not set it manually.
+
 ### `search_memories`
-Hybrid BM25 + vector search. Falls back to fulltext if embeddings are unavailable.
+Hybrid BM25 + vector search with Reciprocal Rank Fusion. Falls back to fulltext if embeddings are unavailable.
+
+Additional options:
+- `include_related` _(boolean)_ — when `true`, each result includes its directly linked neighbours so you can surface related context without a second round-trip
+- `related_depth` _(1–2)_ — how many hops to traverse when `include_related` is `true` (default 1)
+
+### `get_related_memories`
+Traverse the memory graph starting from a single memory.
+
+Inputs:
+- `id` — starting memory UUID
+- `depth` _(1–3)_ — how many hops to follow
+- `relation_types` — optional filter: `["supersedes", "caused-by", "see-also", "follow-up", "similar"]` (`similar` is auto-assigned by the system)
+- `include_content` _(boolean)_ — whether to include full content in results (default false)
+
+Use this when a search result has interesting neighbours and you want to follow the chain deeper. Don't traverse every result automatically — only when the chain looks directly relevant.
 
 ### `get_recent_memories`
 Get most recent memories, optionally filtered by agent, session, or project.
@@ -217,28 +243,24 @@ Add this block to your chosen file:
 ## Memory (aiBrain)
 
 At the start of every session:
-1. Call `aibrain:get_recent_memories` (limit: 10, filter by current `projectPath`) — returns summaries only
-2. Call `aibrain:search_memories` with a query summarizing what the user just asked — returns summaries only
-3. For any result that looks relevant, call `aibrain:get_memory` with its `id` to fetch the full content
-
-During and after work, call `aibrain:save_memory` whenever you learn something worth remembering:
-- Decisions made and why
-- Bugs found and how they were fixed
-- Architecture patterns or conventions in this project
-- User preferences and feedback
-- External service details (API quirks, endpoint structures, config conventions)
+1. Call `aibrain:get_recent_memories` (limit: 10, filter by current `projectPath`)
+2. Call `aibrain:search_memories` with a query summarizing what the user just asked,
+   and set `include_related: true` to surface related context in one call
+3. For any result or neighbour that looks relevant, call `aibrain:get_memory`
+   with its `id` to fetch full content
 
 When saving:
-- `projectPath`: absolute path of the current working directory (or `""` for global context)
-- `tags`: lowercase kebab-case (e.g. `bug-fix`, `architecture`, `user-preference`)
-- `summary`: under 200 chars — the tldr
+- `projectPath`: absolute path of the current working directory
+- `cluster`: the subsystem or domain (e.g. "auth-system", "payment-flow")
+- `tags`: lowercase kebab-case
+- `summary`: under 200 chars
 - `content`: full detail
+- `related_ids`: link to any recently retrieved memories with the appropriate
+  `relation_type` (supersedes, caused-by, follow-up, see-also, similar — auto-assigned)
 
-At the end of every session, save one memory summarizing what was accomplished, what was left incomplete, and any important context for the next session.
-
-For in-progress or incomplete work, still save a memory but include the tag `in-progress`. Update or delete it once the work is complete.
-
-Do NOT save: things already in the codebase, or git history.
+When a search result has neighbours (via `include_related`), use
+`get_related_memories` to traverse deeper only when the chain looks
+directly relevant — don't traverse every result automatically.
 
 ## Directory Exploration → aiBrain
 
