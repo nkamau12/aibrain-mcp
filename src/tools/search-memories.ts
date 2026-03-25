@@ -12,7 +12,6 @@ export const searchMemoriesSchema = z.object({
       tags: z.array(z.string()).optional(),
       since: z.string().optional().describe('ISO 8601 date'),
       until: z.string().optional().describe('ISO 8601 date'),
-      cluster: z.string().optional().describe('Cluster name to filter by (overrides AIBRAIN_DEFAULT_CLUSTER)'),
     })
     .optional(),
   searchMode: z.enum(['hybrid', 'fulltext', 'vector']).default('hybrid'),

@@ -1,7 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getTable, rebuildFtsIndex, isFtsIndexed } from '../db/init.js';
 import { generateEmbedding, isEmbeddingAvailable } from './embedding.js';
-import { config } from '../config.js';
 import type {
   MemoryDocument,
   MemorySearchResult,
@@ -9,7 +8,6 @@ import type {
   SearchOptions,
   ResultOptions,
   TagCount,
-  RelatedId,
 } from '../types.js';
 
 // LanceDB applies a default limit of 10 to query().toArray() if no limit is set.
@@ -168,11 +166,8 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
 }
 
 export async function saveMemory(
-  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary' | 'cluster' | 'related_ids'> & {
-    cluster?: string;
-    // Callers pass structured RelatedId objects; the service serializes to JSON for storage.
-    related_ids?: RelatedId[];
-  }
+  input: Omit<MemoryDocument, 'id' | 'embedding' | 'createdAt' | 'contentAndSummary' | 'cluster' | 'related_ids'> &
+    Partial<Pick<MemoryDocument, 'cluster' | 'related_ids'>>
 ): Promise<string> {
   const table = await getTable();
   const id = uuidv4();
@@ -193,7 +188,7 @@ export async function saveMemory(
     metadata: JSON.stringify(input.metadata ?? {}),
     contentAndSummary,
     cluster: input.cluster ?? '',
-    related_ids: input.related_ids ? JSON.stringify(input.related_ids) : '[]',
+    related_ids: input.related_ids ?? '[]',
   };
 
   await table.add([row]);
@@ -222,35 +217,27 @@ export async function searchMemories(options: SearchOptions): Promise<{
   }
 
   const ro = options.resultOptions;
-
-  // Apply AIBRAIN_DEFAULT_CLUSTER as a pre-filter when no explicit cluster is provided.
-  // Callers that pass filters.cluster always win; those that don't get the env default.
-  let filters = options.filters;
-  if (config.AIBRAIN_DEFAULT_CLUSTER && filters?.cluster === undefined) {
-    filters = { ...filters, cluster: config.AIBRAIN_DEFAULT_CLUSTER };
-  }
-
-  const where = buildWhereClause(filters);
+  const where = buildWhereClause(options.filters);
 
   if (mode === 'fulltext') {
-    return fulltextSearch(options.query, limit, where, filters, ro);
+    return fulltextSearch(options.query, limit, where, options.filters, ro);
   }
 
   if (mode === 'vector') {
     const embedding = await generateEmbedding(options.query);
     if (embedding.length === 0) {
-      return fulltextSearch(options.query, limit, where, filters, ro);
+      return fulltextSearch(options.query, limit, where, options.filters, ro);
     }
-    return vectorSearch(embedding, limit, where, filters, ro);
+    return vectorSearch(embedding, limit, where, options.filters, ro);
   }
 
   // Hybrid: run both, merge with RRF
   const embedding = await generateEmbedding(options.query);
 
   const [bm25Results, vectorResults] = await Promise.all([
-    fulltextSearch(options.query, limit * 3, where, filters, ro),
+    fulltextSearch(options.query, limit * 3, where, options.filters, ro),
     embedding.length > 0
-      ? vectorSearch(embedding, limit * 3, where, filters, ro)
+      ? vectorSearch(embedding, limit * 3, where, options.filters, ro)
       : Promise.resolve({ results: [], totalFound: 0, searchMode: 'vector' }),
   ]);
 
