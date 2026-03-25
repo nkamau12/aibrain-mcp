@@ -35,8 +35,15 @@ export interface MemorySearchResult {
   related_ids?: RelatedId[];
 }
 
+export interface RelatedMemorySummary {
+  id: string;
+  summary: string;
+  relation_type: RelatedId['relation_type'];
+  depth: number;
+}
+
 export interface MemorySearchResultWithRelated extends MemorySearchResult {
-  related?: RelatedId[];
+  related?: RelatedMemorySummary[];
 }
 
 export interface MemoryFilters {
@@ -61,6 +68,8 @@ export interface SearchOptions {
   searchMode?: 'hybrid' | 'fulltext' | 'vector';
   rrfK?: number;
   resultOptions?: ResultOptions;
+  include_related?: boolean;
+  related_depth?: number;
 }
 
 export interface TagCount {

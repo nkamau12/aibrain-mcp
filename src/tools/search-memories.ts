@@ -19,6 +19,8 @@ export const searchMemoriesSchema = z.object({
   rrfK: z.number().default(60).describe('RRF k parameter'),
   includeContent: z.boolean().default(false).describe('Include full content in results (default false — use get_memory for full content)'),
   contentMaxLength: z.number().int().min(0).default(500).describe('Max chars of content when includeContent is true (0 = unlimited)'),
+  include_related: z.boolean().default(false).describe('Attach related memories (by ID) to each result'),
+  related_depth: z.number().int().min(1).max(2).default(1).describe('How many hops to follow related_ids links (1 or 2)'),
 });
 
 export async function handleSearchMemories(args: unknown) {
@@ -26,6 +28,8 @@ export async function handleSearchMemories(args: unknown) {
   const result = await searchMemories({
     ...input,
     resultOptions: { includeContent: input.includeContent, contentMaxLength: input.contentMaxLength },
+    include_related: input.include_related,
+    related_depth: input.related_depth,
   });
   return {
     content: [
