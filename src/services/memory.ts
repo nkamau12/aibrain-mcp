@@ -16,15 +16,15 @@ import type {
 // Use this constant to fetch all rows when we need the full dataset.
 const QUERY_ALL_LIMIT = 1_000_000;
 
-// ── Input validation constants ────────────────────────────────────────────────
+// -- Input validation constants ------------------------------------------------
 
 const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CLUSTER_RE = /^[a-z0-9-]{1,64}$/;
 
-// Control characters (U+0000–U+001F, U+007F) are never valid in filter strings.
+// Control characters (U+0000-U+001F, U+007F) are never valid in filter strings.
 // Null bytes and common SQL comment sequences are explicitly caught here even
-// though LanceDB's SQL engine may not be exploitable via them — defence in depth.
+// though LanceDB's SQL engine may not be exploitable via them -- defence in depth.
 const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
 
 const MAX_FILTER_LENGTH: Record<string, number> = {
@@ -34,10 +34,10 @@ const MAX_FILTER_LENGTH: Record<string, number> = {
   cluster: 64,
 };
 
-// ── Validation helpers ────────────────────────────────────────────────────────
+// -- Validation helpers --------------------------------------------------------
 
 /**
- * Centralised filter-value validator. Validates `value` according to
+ * Centralised filter-value validator. Validates value according to
  * per-field rules and throws a descriptive Error on any violation.
  *
  * Returns the original (unescaped) string so callers can apply SQL escaping
@@ -73,7 +73,7 @@ export function sanitizeFilterValue(value: string, fieldName: string): string {
 }
 
 /**
- * Validates that `id` is a well-formed UUID (v1–v5, any variant).
+ * Validates that id is a well-formed UUID (v1-v5, any variant).
  * Throws if the format is invalid so callers never embed unvalidated IDs
  * in WHERE clauses.
  */
@@ -87,7 +87,7 @@ function validateUuid(id: string): string {
 /**
  * Escapes single quotes for embedding a string literal inside a SQL WHERE
  * clause. Must only be called on values that have already been validated by
- * `sanitizeFilterValue` or `validateUuid`.
+ * sanitizeFilterValue or validateUuid.
  */
 function escapeSql(value: string): string {
   return value.replace(/'/g, "''");
@@ -143,7 +143,7 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
     const raw: string = row.content ?? '';
     result.content =
       contentMaxLength > 0 && raw.length > contentMaxLength
-        ? raw.slice(0, contentMaxLength) + '…'
+        ? raw.slice(0, contentMaxLength) + '...'
         : raw;
   }
 
@@ -159,6 +159,14 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
   }
 
   if (row.cluster) result.cluster = row.cluster;
+
+  if (row.related_ids) {
+    try {
+      const parsed: RelatedId[] =
+        typeof row.related_ids === 'string' ? JSON.parse(row.related_ids) : row.related_ids;
+      if (Array.isArray(parsed) && parsed.length > 0) result.related_ids = parsed;
+    } catch {}
+  }
 
   if (row._distance !== undefined) result.score = 1 - row._distance;
   if (row._relevance_score !== undefined) result.score = row._relevance_score;
@@ -198,10 +206,83 @@ export async function saveMemory(
 
   await table.add([row]);
 
+  // Create reverse (back) links on every referenced memory.
+  // Fire-and-forget so back-linking failures do not block the caller.
+  if (input.related_ids && input.related_ids.length > 0) {
+    Promise.all(
+      input.related_ids.map((link) =>
+        appendRelatedIdIfAbsent(link.id, {
+          id,
+          relation_type: reverseRelationType(link.relation_type),
+        })
+      )
+    ).catch((err) => {
+      console.error('[aibrain] Back-linking error:', err);
+    });
+  }
+
   // Schedule a debounced FTS index rebuild so the new row becomes searchable
   rebuildFtsIndex();
 
   return id;
+}
+
+const REVERSE_RELATION: Record<string, RelatedId['relation_type']> = {
+  supersedes: 'see-also',
+  'caused-by': 'see-also',
+  'see-also': 'see-also',
+  'follow-up': 'see-also',
+};
+
+function reverseRelationType(relationType: string): RelatedId['relation_type'] {
+  return REVERSE_RELATION[relationType] ?? 'see-also';
+}
+
+/**
+ * Appends a back-link to the target memory if no link between the two IDs
+ * already exists (regardless of relation type). Skips silently if the target
+ * memory has been deleted or if a link already exists.
+ *
+ * Exported so Issue #9 (auto-linking) can reuse this without duplicating logic.
+ */
+export async function appendRelatedIdIfAbsent(
+  targetId: string,
+  link: RelatedId
+): Promise<void> {
+  const safeTargetId = validateUuid(targetId);
+  validateUuid(link.id);
+
+  const table = await getTable();
+
+  const rows = await table
+    .query()
+    .where(`id = '${escapeSql(safeTargetId)}'`)
+    .limit(1)
+    .toArray();
+
+  // Target memory has been deleted -- skip silently.
+  if (rows.length === 0) return;
+
+  const targetRow = rows[0];
+
+  let existing: RelatedId[] = [];
+  try {
+    existing =
+      typeof targetRow.related_ids === 'string'
+        ? JSON.parse(targetRow.related_ids)
+        : (targetRow.related_ids ?? []);
+  } catch {
+    existing = [];
+  }
+
+  // Duplicate check: any existing link between these two IDs, regardless of type.
+  if (existing.some((r) => r.id === link.id)) return;
+
+  const updated = JSON.stringify([...existing, link]);
+  await table.update({
+    values: { related_ids: updated },
+    where: `id = '${escapeSql(safeTargetId)}'`,
+  });
 }
 
 export async function searchMemories(options: SearchOptions): Promise<{
@@ -309,7 +390,7 @@ async function fulltextSearch(
           searchMode: 'fulltext',
         };
       }
-      // FTS returned 0 results after filtering — fall through to manual scan
+      // FTS returned 0 results after filtering -- fall through to manual scan
     } catch (err: any) {
       console.error('[aibrain] FTS index search failed, falling back to scan:', err.message);
     }
@@ -435,7 +516,7 @@ export async function getRecentMemories(
 
 export async function getMemoryById(id: string): Promise<MemorySearchResult | null> {
   try {
-    // Validate before constructing the WHERE clause — UUIDs are safe to interpolate
+    // Validate before constructing the WHERE clause -- UUIDs are safe to interpolate
     // directly once validated (they contain only hex digits and hyphens), but we
     // still apply escapeSql for belt-and-suspenders consistency.
     const safeId = validateUuid(id);

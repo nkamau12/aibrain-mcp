@@ -14,6 +14,15 @@ export const saveMemorySchema = z.object({
     .regex(/^[a-z0-9-]{0,64}$/)
     .default('')
     .describe('Logical domain/subsystem (e.g. "auth-system", "payment-flow")'),
+  related_ids: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        relation_type: z.enum(['supersedes', 'caused-by', 'see-also', 'follow-up']),
+      })
+    )
+    .default([])
+    .describe('Related memory IDs with typed relationships'),
 });
 
 export async function handleSaveMemory(args: unknown) {
