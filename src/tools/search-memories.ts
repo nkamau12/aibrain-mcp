@@ -21,15 +21,19 @@ export const searchMemoriesSchema = z.object({
   contentMaxLength: z.number().int().min(0).default(500).describe('Max chars of content when includeContent is true (0 = unlimited)'),
   include_related: z.boolean().default(false).describe('Attach related memories (by ID) to each result'),
   related_depth: z.number().int().min(1).max(2).default(1).describe('How many hops to follow related_ids links (1 or 2)'),
+  include_stale: z.boolean().default(false).describe('Include stale (superseded) memories in results'),
 });
 
 export async function handleSearchMemories(args: unknown) {
   const input = searchMemoriesSchema.parse(args);
+  const filters = input.filters ? { ...input.filters, include_stale: input.include_stale } : { include_stale: input.include_stale };
   const result = await searchMemories({
     ...input,
+    filters,
     resultOptions: { includeContent: input.includeContent, contentMaxLength: input.contentMaxLength },
     include_related: input.include_related,
     related_depth: input.related_depth,
+    include_stale: input.include_stale,
   });
   return {
     content: [
