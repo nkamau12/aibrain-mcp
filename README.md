@@ -145,12 +145,15 @@ Key fields:
 - `cluster` — subsystem or domain label in lowercase kebab-case (e.g. `"auth-system"`, `"payment-flow"`). Used to scope searches to a subsystem. Falls back to `AIBRAIN_DEFAULT_CLUSTER` if not set.
 - `related_ids` — array of objects linking this memory to others: `{ "id": "<uuid>", "relation_type": "supersedes" | "caused-by" | "see-also" | "follow-up" | "similar" (auto-assigned) }`. Back-links are created automatically. Note: `similar` is assigned automatically by the system when auto-linking fires — do not set it manually.
 
+**Staleness via `supersedes`**: when you save a memory with `relation_type: "supersedes"` pointing at an older memory, that older memory is automatically marked stale and hidden from future queries by default. This is the only relation type that triggers staleness — `similar`, `caused-by`, `see-also`, and `follow-up` do not. You never need to manually mark a memory stale; saving a superseding memory handles it.
+
 ### `search_memories`
 Hybrid BM25 + vector search with Reciprocal Rank Fusion. Falls back to fulltext if embeddings are unavailable.
 
 Additional options:
 - `include_related` _(boolean)_ — when `true`, each result includes its directly linked neighbours so you can surface related context without a second round-trip
 - `related_depth` _(1–2)_ — how many hops to traverse when `include_related` is `true` (default 1)
+- `include_stale` _(boolean, default false)_ — when `true`, includes stale (superseded) memories in results. Use this only when you need historical context; by default stale memories are hidden.
 
 ### `get_related_memories`
 Traverse the memory graph starting from a single memory.
@@ -160,11 +163,15 @@ Inputs:
 - `depth` _(1–3)_ — how many hops to follow
 - `relation_types` — optional filter: `["supersedes", "caused-by", "see-also", "follow-up", "similar"]` (`similar` is auto-assigned by the system)
 - `include_content` _(boolean)_ — whether to include full content in results (default false)
+- `include_stale` _(boolean, default false)_ — when `true`, includes stale (superseded) memories in traversal. By default, stale nodes act as a firewall in BFS: when a stale memory is encountered, it and its entire subtree are pruned from the traversal. Set `include_stale: true` to follow the full historical chain.
 
 Use this when a search result has interesting neighbours and you want to follow the chain deeper. Don't traverse every result automatically — only when the chain looks directly relevant.
 
 ### `get_recent_memories`
 Get most recent memories, optionally filtered by agent, session, or project.
+
+Options:
+- `include_stale` _(boolean, default false)_ — when `true`, includes stale (superseded) memories in results.
 
 ### `get_memory`
 Fetch full content of a memory by ID.
@@ -257,6 +264,11 @@ When saving:
 - `content`: full detail
 - `related_ids`: link to any recently retrieved memories with the appropriate
   `relation_type` (supersedes, caused-by, follow-up, see-also, similar — auto-assigned)
+
+When a memory supersedes another, the old one is automatically hidden from
+future queries — you do not need to manually manage stale state. Use
+`include_stale: true` only when you need historical context (e.g. auditing
+what changed or why a decision was reversed).
 
 When a search result has neighbours (via `include_related`), use
 `get_related_memories` to traverse deeper only when the chain looks
