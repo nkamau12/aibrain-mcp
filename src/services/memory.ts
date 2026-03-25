@@ -555,6 +555,101 @@ export async function deleteMemory(
   }
 }
 
+export async function getRelatedMemories(
+  rootId: string,
+  depth: number,
+  relationTypes?: string[],
+  includeContent: boolean = false
+): Promise<{
+  root: { id: string; summary: string; tags: string[] } | null;
+  nodes: Array<{
+    id: string;
+    summary: string;
+    content?: string;
+    relation_type: string;
+    depth: number;
+    tags: string[];
+    createdAt: string;
+  }>;
+  error?: string;
+}> {
+  const root = await getMemoryById(rootId);
+  if (!root) {
+    return { root: null, nodes: [], error: `Memory not found: ${rootId}` };
+  }
+
+  const rootNode = {
+    id: root.id,
+    summary: root.summary,
+    tags: root.tags ?? [],
+  };
+
+  const visited = new Set<string>([rootId]);
+  const nodes: Array<{
+    id: string;
+    summary: string;
+    content?: string;
+    relation_type: string;
+    depth: number;
+    tags: string[];
+    createdAt: string;
+  }> = [];
+
+  // BFS queue entries: [memoryId, currentDepth]
+  type QueueEntry = { id: string; relation_type: string; currentDepth: number };
+  const queue: QueueEntry[] = [];
+
+  // Seed the queue from the root's related_ids
+  const rootRelatedIds: RelatedId[] = root.related_ids ?? [];
+  for (const link of rootRelatedIds) {
+    if (relationTypes && !relationTypes.includes(link.relation_type)) continue;
+    if (!visited.has(link.id)) {
+      queue.push({ id: link.id, relation_type: link.relation_type, currentDepth: 1 });
+    }
+  }
+
+  while (queue.length > 0) {
+    const { id, relation_type, currentDepth } = queue.shift()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+
+    const memory = await getMemoryById(id);
+    if (!memory) continue;
+
+    const node: (typeof nodes)[number] = {
+      id: memory.id,
+      summary: memory.summary,
+      relation_type,
+      depth: currentDepth,
+      tags: memory.tags ?? [],
+      createdAt: memory.createdAt,
+    };
+
+    if (includeContent) {
+      node.content = memory.content;
+    }
+
+    nodes.push(node);
+
+    // Only follow links if we haven't reached the depth limit
+    if (currentDepth < depth) {
+      const linkedIds: RelatedId[] = memory.related_ids ?? [];
+      for (const link of linkedIds) {
+        if (relationTypes && !relationTypes.includes(link.relation_type)) continue;
+        if (!visited.has(link.id)) {
+          queue.push({
+            id: link.id,
+            relation_type: link.relation_type,
+            currentDepth: currentDepth + 1,
+          });
+        }
+      }
+    }
+  }
+
+  return { root: rootNode, nodes };
+}
+
 export async function listTags(
   agentName?: string,
   projectPath?: string,

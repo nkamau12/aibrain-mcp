@@ -8,6 +8,7 @@ import { handleGetRecentMemories, getRecentMemoriesSchema } from './tools/get-re
 import { handleDeleteMemory, deleteMemorySchema } from './tools/delete-memory.js';
 import { handleListTags, listTagsSchema } from './tools/list-tags.js';
 import { handleGetMemory, getMemorySchema } from './tools/get-memory.js';
+import { handleGetRelatedMemories, getRelatedMemoriesSchema } from './tools/get-related-memories.js';
 
 // Initialize DB before accepting connections
 await getTable();
@@ -57,6 +58,13 @@ server.tool(
   'Fetch the full content of a single memory by ID. Use after search_memories or get_recent_memories to expand a specific result.',
   getMemorySchema.shape,
   handleGetMemory
+);
+
+server.tool(
+  'get_related_memories',
+  'Traverse the memory graph from a root memory ID, following related_ids links up to a given depth. Returns all reachable memories with their relation type and hop depth.',
+  getRelatedMemoriesSchema.shape,
+  handleGetRelatedMemories
 );
 
 const transport = new StdioServerTransport();
