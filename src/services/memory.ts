@@ -14,9 +14,80 @@ import type {
 // Use this constant to fetch all rows when we need the full dataset.
 const QUERY_ALL_LIMIT = 1_000_000;
 
-const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
+// ── Input validation constants ────────────────────────────────────────────────
 
-function escapeStr(value: string): string {
+const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CLUSTER_RE = /^[a-z0-9-]{1,64}$/;
+
+// Control characters (U+0000–U+001F, U+007F) are never valid in filter strings.
+// Null bytes and common SQL comment sequences are explicitly caught here even
+// though LanceDB's SQL engine may not be exploitable via them — defence in depth.
+const CONTROL_CHARS_RE = /[\x00-\x1f\x7f]/;
+
+const MAX_FILTER_LENGTH: Record<string, number> = {
+  agentName: 256,
+  sessionId: 256,
+  projectPath: 4096,
+  cluster: 64,
+};
+
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+/**
+ * Centralised filter-value validator. Validates `value` according to
+ * per-field rules and throws a descriptive Error on any violation.
+ *
+ * Returns the original (unescaped) string so callers can apply SQL escaping
+ * separately and explicitly. Keeping validation and escaping as distinct steps
+ * makes the intent of each operation clear.
+ */
+export function sanitizeFilterValue(value: string, fieldName: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`Filter field '${fieldName}' must be a string`);
+  }
+
+  const maxLen = MAX_FILTER_LENGTH[fieldName] ?? 1024;
+  if (value.length > maxLen) {
+    throw new Error(
+      `Filter field '${fieldName}' exceeds maximum length of ${maxLen} characters`
+    );
+  }
+
+  if (CONTROL_CHARS_RE.test(value)) {
+    throw new Error(
+      `Filter field '${fieldName}' contains invalid control characters`
+    );
+  }
+
+  // cluster requires an extra strict allowlist pattern
+  if (fieldName === 'cluster' && !CLUSTER_RE.test(value)) {
+    throw new Error(
+      `Filter field 'cluster' must match /^[a-z0-9-]{1,64}$/, got: ${JSON.stringify(value)}`
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Validates that `id` is a well-formed UUID (v1–v5, any variant).
+ * Throws if the format is invalid so callers never embed unvalidated IDs
+ * in WHERE clauses.
+ */
+function validateUuid(id: string): string {
+  if (typeof id !== 'string' || !UUID_RE.test(id)) {
+    throw new Error(`Invalid id: expected a UUID, got ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
+/**
+ * Escapes single quotes for embedding a string literal inside a SQL WHERE
+ * clause. Must only be called on values that have already been validated by
+ * `sanitizeFilterValue` or `validateUuid`.
+ */
+function escapeSql(value: string): string {
   return value.replace(/'/g, "''");
 }
 
@@ -30,13 +101,16 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
   const clauses: string[] = [];
 
   if (filters.agentName) {
-    clauses.push(`\`agentName\` = '${escapeStr(filters.agentName)}'`);
+    const v = sanitizeFilterValue(filters.agentName, 'agentName');
+    clauses.push(`\`agentName\` = '${escapeSql(v)}'`);
   }
   if (filters.sessionId) {
-    clauses.push(`\`sessionId\` = '${escapeStr(filters.sessionId)}'`);
+    const v = sanitizeFilterValue(filters.sessionId, 'sessionId');
+    clauses.push(`\`sessionId\` = '${escapeSql(v)}'`);
   }
   if (filters.projectPath !== undefined) {
-    clauses.push(`\`projectPath\` = '${escapeStr(filters.projectPath)}'`);
+    const v = sanitizeFilterValue(filters.projectPath, 'projectPath');
+    clauses.push(`\`projectPath\` = '${escapeSql(v)}'`);
   }
   if (filters.since) {
     clauses.push(`\`createdAt\` >= '${safeDate(filters.since)}'`);
@@ -337,12 +411,16 @@ export async function getRecentMemories(
 }
 
 export async function getMemoryById(id: string): Promise<MemorySearchResult | null> {
+  // Validate before constructing the WHERE clause — UUIDs are safe to interpolate
+  // directly once validated (they contain only hex digits and hyphens), but we
+  // still apply escapeSql for belt-and-suspenders consistency.
+  const safeId = validateUuid(id);
   const table = await getTable();
 
   try {
     const rows = await table
       .query()
-      .where(`id = '${id.replace(/'/g, "''")}'`)  // `id` is lowercase, no quoting needed
+      .where(`id = '${escapeSql(safeId)}'`)
       .limit(1)
       .toArray();
 
@@ -356,11 +434,18 @@ export async function getMemoryById(id: string): Promise<MemorySearchResult | nu
 export async function deleteMemory(
   id: string
 ): Promise<{ success: boolean; id?: string; error?: string }> {
+  let safeId: string;
+  try {
+    safeId = validateUuid(id);
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+
   const table = await getTable();
 
   try {
-    await table.delete(`id = '${id.replace(/'/g, "''")}'`);
-    return { success: true, id };
+    await table.delete(`id = '${escapeSql(safeId)}'`);
+    return { success: true, id: safeId };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -374,9 +459,14 @@ export async function listTags(
   const table = await getTable();
   const clauses: string[] = [];
 
-  if (agentName) clauses.push(`\`agentName\` = '${agentName.replace(/'/g, "''")}'`);
-  if (projectPath !== undefined)
-    clauses.push(`\`projectPath\` = '${projectPath.replace(/'/g, "''")}'`);
+  if (agentName) {
+    const v = sanitizeFilterValue(agentName, 'agentName');
+    clauses.push(`\`agentName\` = '${escapeSql(v)}'`);
+  }
+  if (projectPath !== undefined) {
+    const v = sanitizeFilterValue(projectPath, 'projectPath');
+    clauses.push(`\`projectPath\` = '${escapeSql(v)}'`);
+  }
 
   const where = clauses.join(' AND ');
   let q = table.query().limit(QUERY_ALL_LIMIT);
