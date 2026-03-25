@@ -9,6 +9,11 @@ export const saveMemorySchema = z.object({
   sessionId: z.string().describe('Session/conversation identifier'),
   projectPath: z.string().default('').describe('Absolute project path or empty for global'),
   metadata: z.record(z.unknown()).default({}).describe('Additional metadata'),
+  cluster: z
+    .string()
+    .regex(/^[a-z0-9-]{0,64}$/)
+    .default('')
+    .describe('Logical domain/subsystem (e.g. "auth-system", "payment-flow")'),
 });
 
 export async function handleSaveMemory(args: unknown) {
