@@ -127,6 +127,10 @@ function buildWhereClause(filters: MemoryFilters | undefined): string {
     clauses.push(`\`cluster\` = '${escapeSql(v)}'`);
   }
 
+  if (!filters.include_stale) {
+    clauses.push(`(\`is_stale\` = false OR \`is_stale\` IS NULL)`);
+  }
+
   return clauses.join(' AND ');
 }
 
@@ -161,6 +165,8 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
   }
 
   if (row.cluster) result.cluster = row.cluster;
+
+  result.is_stale = row.is_stale ?? false;
 
   if (row.related_ids) {
     try {
@@ -204,6 +210,7 @@ export async function saveMemory(
     contentAndSummary,
     cluster: input.cluster ?? '',
     related_ids: input.related_ids ? JSON.stringify(input.related_ids) : '[]',
+    is_stale: false,
   };
 
   await table.add([row]);
@@ -624,6 +631,7 @@ function matchesWhere(row: Record<string, any>, filters?: MemoryFilters): boolea
   if (filters.since && row.createdAt < filters.since) return false;
   if (filters.until && row.createdAt > filters.until) return false;
   if (filters.cluster !== undefined && row.cluster !== filters.cluster) return false;
+  if (!filters.include_stale && row.is_stale === true) return false;
   return true;
 }
 
