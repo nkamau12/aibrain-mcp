@@ -74,6 +74,7 @@ export interface SearchOptions {
   resultOptions?: ResultOptions;
   include_related?: boolean;
   related_depth?: number;
+  include_stale?: boolean;
 }
 
 export interface TagCount {

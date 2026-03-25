@@ -215,16 +215,27 @@ export async function saveMemory(
 
   await table.add([row]);
 
-  // Create reverse (back) links on every referenced memory.
-  // Fire-and-forget so back-linking failures do not block the caller.
+  // Create reverse (back) links on every referenced memory, and mark superseded
+  // memories as stale. Both operations are fire-and-forget so failures do not
+  // block the caller or prevent the save from succeeding.
   if (input.related_ids && input.related_ids.length > 0) {
     Promise.all(
-      input.related_ids.map((link) =>
-        appendRelatedIdIfAbsent(link.id, {
+      input.related_ids.map(async (link) => {
+        await appendRelatedIdIfAbsent(link.id, {
           id,
           relation_type: reverseRelationType(link.relation_type),
-        })
-      )
+        });
+
+        // Only "supersedes" triggers staleness — similar, caused-by, see-also,
+        // and follow-up must not mark the target stale.
+        if (link.relation_type === 'supersedes') {
+          const safeId = validateUuid(link.id);
+          await table.update({
+            values: { is_stale: true },
+            where: `id = '${escapeSql(safeId)}'`,
+          });
+        }
+      })
     ).catch((err) => {
       console.error('[aibrain] Back-linking error:', err);
     });
@@ -453,7 +464,12 @@ export async function searchMemories(options: SearchOptions): Promise<{
 
   // Apply AIBRAIN_DEFAULT_CLUSTER as a pre-filter when no explicit cluster is provided.
   // Callers that pass filters.cluster always win; those that don't get the env default.
+  // Thread include_stale from the top-level option into filters so buildWhereClause
+  // and matchesWhere can enforce it consistently across all search paths.
   let filters = options.filters;
+  if (options.include_stale !== undefined && filters?.include_stale === undefined) {
+    filters = { ...filters, include_stale: options.include_stale };
+  }
   if (config.AIBRAIN_DEFAULT_CLUSTER && filters?.cluster === undefined) {
     filters = { ...filters, cluster: config.AIBRAIN_DEFAULT_CLUSTER };
   }
@@ -522,7 +538,7 @@ export async function searchMemories(options: SearchOptions): Promise<{
     response.results.map(async (result) => {
       const rootLinks = result.related_ids ?? [];
       if (rootLinks.length === 0) return result;
-      const related = await fetchRelatedBfs(seedIds, rootLinks, maxDepth);
+      const related = await fetchRelatedBfs(seedIds, rootLinks, maxDepth, options.include_stale ?? false);
       return related.length > 0 ? { ...result, related } : result;
     })
   );
@@ -784,6 +800,7 @@ export async function getRelatedMemories(
 
     const memory = await getMemoryById(id);
     if (!memory) continue;
+    if (!includeStale && memory.is_stale) continue;
 
     // Skip stale nodes unless the caller explicitly wants them — don't add
     // to results and don't follow their links so stale branches are pruned.
