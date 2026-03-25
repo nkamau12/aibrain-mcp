@@ -162,6 +162,8 @@ function rowToResult(row: Record<string, any>, opts: ResultOptions = {}): Memory
 
   if (row.cluster) result.cluster = row.cluster;
 
+  result.is_stale = row.is_stale ?? false;
+
   if (row.related_ids) {
     try {
       const parsed: RelatedId[] =
@@ -204,6 +206,7 @@ export async function saveMemory(
     contentAndSummary,
     cluster: input.cluster ?? '',
     related_ids: input.related_ids ? JSON.stringify(input.related_ids) : '[]',
+    is_stale: false,
   };
 
   await table.add([row]);

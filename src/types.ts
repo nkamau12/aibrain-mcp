@@ -13,6 +13,7 @@ export interface MemoryDocument {
   cluster: string;
   /** JSON-serialized Array<RelatedId> */
   related_ids: string;
+  is_stale?: boolean;
 }
 
 export interface RelatedId {
@@ -33,6 +34,7 @@ export interface MemorySearchResult {
   score?: number;
   cluster?: string;
   related_ids?: RelatedId[];
+  is_stale?: boolean;
 }
 
 export interface RelatedMemorySummary {
@@ -54,6 +56,7 @@ export interface MemoryFilters {
   since?: string;
   until?: string;
   cluster?: string;
+  include_stale?: boolean;
 }
 
 export interface ResultOptions {
