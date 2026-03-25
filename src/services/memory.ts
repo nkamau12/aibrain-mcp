@@ -223,6 +223,11 @@ export async function saveMemory(
     });
   }
 
+  // Fire-and-forget — do not block the save response
+  autoLink(id, embedding).catch((err) =>
+    console.error('[autoLink] failed silently:', err)
+  );
+
   // Schedule a debounced FTS index rebuild so the new row becomes searchable
   rebuildFtsIndex();
 
@@ -238,6 +243,70 @@ const REVERSE_RELATION: Record<string, RelatedId['relation_type']> = {
 
 function reverseRelationType(relationType: string): RelatedId['relation_type'] {
   return REVERSE_RELATION[relationType] ?? 'see-also';
+}
+
+/**
+ * Runs a vector similarity search against existing memories and creates
+ * bidirectional `similar` links for any candidates above the configured
+ * threshold. Called fire-and-forget after every save so it never adds
+ * latency to the caller.
+ *
+ * Manual links always take precedence: if any link of any relation type
+ * already exists between the two IDs, the auto-link is skipped.
+ */
+async function autoLink(newId: string, embedding: number[]): Promise<void> {
+  const AUTO_LINK_THRESHOLD = config.AIBRAIN_AUTO_LINK_THRESHOLD;
+  const AUTO_LINK_LIMIT = config.AIBRAIN_AUTO_LINK_LIMIT;
+
+  // Zero vectors indicate embedding is unavailable — skip auto-linking.
+  if (embedding.every((v) => v === 0)) return;
+
+  const table = await getTable();
+
+  const rows = await table
+    .vectorSearch(embedding)
+    .column('embedding')
+    .distanceType('cosine')
+    .limit(AUTO_LINK_LIMIT + 1)
+    .toArray();
+
+  const candidates = rows.filter((row: any) => row.id !== newId);
+
+  await Promise.all(
+    candidates.map(async (row: any) => {
+      const score = 1 - (row._distance ?? 1);
+      if (score < AUTO_LINK_THRESHOLD) return;
+
+      // Skip if any link already exists from the new memory to this candidate.
+      // appendRelatedIdIfAbsent handles the target side; we check the source side
+      // to respect manual links supplied at save time.
+      const sourceRows = await table
+        .query()
+        .where(`id = '${escapeSql(validateUuid(newId))}'`)
+        .limit(1)
+        .toArray();
+
+      if (sourceRows.length === 0) return;
+
+      let sourceLinks: RelatedId[] = [];
+      try {
+        sourceLinks =
+          typeof sourceRows[0].related_ids === 'string'
+            ? JSON.parse(sourceRows[0].related_ids)
+            : (sourceRows[0].related_ids ?? []);
+      } catch {
+        sourceLinks = [];
+      }
+
+      if (sourceLinks.some((r) => r.id === row.id)) return;
+
+      // Create bidirectional similar links.
+      await Promise.all([
+        appendRelatedIdIfAbsent(newId, { id: row.id, relation_type: 'similar' }),
+        appendRelatedIdIfAbsent(row.id, { id: newId, relation_type: 'similar' }),
+      ]);
+    })
+  );
 }
 
 /**
